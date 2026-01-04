@@ -1,197 +1,386 @@
-<template>
-  <div class="app-container">
-    <el-card shadow="never" class="mb-4">
-      <el-form :inline="true">
-        <el-form-item label="文档标题">
-          <el-input v-model="queryParams.title" placeholder="输入标题搜索" clearable @keyup.enter="fetchList" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" icon="Search" @click="fetchList">搜索</el-button>
-          <el-button type="success" icon="Upload" @click="dialogVisible = true">上传文档</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <el-table v-loading="loading" :data="tableData" border>
-      <el-table-column prop="id" label="ID" width="80" align="center" />
-      <el-table-column prop="title" label="文档标题" />
-      <el-table-column prop="projectId" label="关联非遗ID" width="120" align="center" />
-      <el-table-column prop="chunkCount" label="切片数" width="100" align="center" />
-      <el-table-column prop="status" label="状态" width="120" align="center">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 'completed' ? 'success' : 'warning'">
-            {{ row.status === 'completed' ? '已完成' : '处理中' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="createdAt" label="上传时间" width="180" />
-      <el-table-column label="操作" width="250" fixed="right" align="center">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="handlePreview(row)">预览</el-button>
-          <el-button 
-            link 
-            type="warning" 
-            :loading="row.revectorizing" 
-            @click="handleRevectorize(row)"
-          >重算向量</el-button>
-          <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <div class="pagination-container">
-      <el-pagination
-        v-model:current-page="queryParams.current"
-        v-model:page-size="queryParams.pageSize"
-        :total="total"
-        layout="total, sizes, prev, pager, next, jumper"
-        @size-change="fetchList"
-        @current-change="fetchList"
-      />
-    </div>
-
-    <el-dialog title="上传知识库文档" v-model="dialogVisible" width="500px">
-      <el-form :model="uploadForm" label-width="80px">
-        <el-form-item label="文档标题">
-          <el-input v-model="uploadForm.title" placeholder="请输入标题" />
-        </el-form-item>
-        <el-form-item label="关联项目">
-          <el-input v-model="uploadForm.projectId" placeholder="非遗项目ID (选填)" />
-        </el-form-item>
-        <el-form-item label="文件">
-          <el-upload
-            class="upload-demo"
-            drag
-            action="#"
-            :auto-upload="false"
-            :limit="1"
-            :on-change="handleFileChange"
-            :on-remove="() => { uploadForm.file = null }"
-          >
-            <el-icon class="el-icon--upload"><upload-filled /></el-icon>
-            <div class="el-upload__text">拖拽文件到此处 或 <em>点击上传</em></div>
-            <template #tip>
-              <div class="el-upload__tip">支持 .txt, .pdf, .doc 格式</div>
-            </template>
-          </el-upload>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="uploading" @click="handleUpload">开始上传</el-button>
-      </template>
-    </el-dialog>
-  </div>
-</template>
-
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { getKnowledgeListAPI, uploadKnowledgeAPI, deleteKnowledgeAPI, revectorizeKnowledgeAPI } from '@/api/knowledge'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled } from '@element-plus/icons-vue'
+import type { UploadInstance, UploadProps, UploadUserFile } from 'element-plus'
+import { Search, Upload, Refresh, Delete, Document } from '@element-plus/icons-vue'
 
+// 引入 API
+import { 
+  getKnowledgeListAPI, 
+  uploadKnowledgeAPI, 
+  deleteKnowledgeAPI, 
+  revectorizeKnowledgeAPI,
+  updateKnowledgeAPI
+} from '@/api/knowledge'
+import { getICHListAPI } from '@/api/ich'
+
+// === 数据定义 ===
 const loading = ref(false)
 const tableData = ref([])
 const total = ref(0)
-const dialogVisible = ref(false)
-const uploading = ref(false)
+const projectOptions = ref<any[]>([]) // 非遗项目下拉选项
 
+// 查询参数
 const queryParams = reactive({
   current: 1,
   pageSize: 10,
-  title: ''
-})
-
-const uploadForm = reactive({
   title: '',
-  projectId: '',
-  file: null as any
+  projectId: undefined as number | undefined
 })
 
-const fetchList = async () => {
+// 表单弹窗控制
+const dialogVisible = ref(false)
+const dialogType = ref<'add' | 'edit'>('add')
+const submitLoading = ref(false)
+
+// 表单数据
+const formRef = ref()
+const formData = reactive({
+  id: undefined as number | undefined,
+  title: '',
+  projectId: undefined as number | undefined,
+  file: null as File | null
+})
+
+// 上传组件引用
+const uploadRef = ref<UploadInstance>()
+const fileList = ref<UploadUserFile[]>([])
+
+// 表单校验规则
+const rules = {
+  title: [{ required: true, message: '请输入文档标题', trigger: 'blur' }],
+  projectId: [{ required: true, message: '请选择关联非遗项目', trigger: 'change' }]
+}
+
+// === 方法实现 ===
+
+// 1. 获取非遗项目列表（用于下拉框）
+const getProjectList = async () => {
+  try {
+    // 获取所有项目用于筛选（pageSize 设大一点）
+    const res = await getICHListAPI({ current: 1, pageSize: 100 })
+    projectOptions.value = res.data.records
+  } catch (error) {
+    console.error('获取项目列表失败', error)
+  }
+}
+
+// 2. 获取知识库列表
+const getList = async () => {
   loading.value = true
   try {
-    // 修复：添加 : any 类型断言，解决 res.code 报错
-    const res: any = await getKnowledgeListAPI(queryParams)
-    if (res.code === 0) {
-      tableData.value = res.data.records
-      total.value = res.data.total
-    }
+    const res = await getKnowledgeListAPI(queryParams)
+    tableData.value = res.data.records
+    total.value = res.data.total
+  } catch (error) {
+    // 错误已被拦截器处理
   } finally {
     loading.value = false
   }
 }
 
-const handleFileChange = (file: any) => {
-  uploadForm.file = file.raw
+// 3. 处理搜索/重置
+const handleSearch = () => {
+  queryParams.current = 1
+  getList()
+}
+const handleReset = () => {
+  queryParams.title = ''
+  queryParams.projectId = undefined
+  handleSearch()
 }
 
-const handleUpload = async () => {
-  if (!uploadForm.file) {
-    ElMessage.warning('请选择文件')
-    return
-  }
-  uploading.value = true
-  try {
-    const formData = new FormData()
-    formData.append('file', uploadForm.file)
-    formData.append('title', uploadForm.title)
-    if (uploadForm.projectId) {
-      formData.append('projectId', uploadForm.projectId)
-    }
-
-    // 修复：添加 : any 类型断言
-    const res: any = await uploadKnowledgeAPI(formData)
-    if (res.code === 0) {
-      ElMessage.success('上传成功，后台正在处理中...')
-      dialogVisible.value = false
-      fetchList()
-    }
-  } catch (error) {
-    ElMessage.error('上传失败')
-  } finally {
-    uploading.value = false
-  }
-}
-
-const handleRevectorize = async (row: any) => {
-  row.revectorizing = true
-  try {
-    // 修复：添加 : any 类型断言（虽然这里没报错，但预防万一）
-    const res: any = await revectorizeKnowledgeAPI(row.id)
-    // 只有 code 为 0 才提示成功
-    if (res.code === 0) {
-      ElMessage.success('重算指令已发送')
-    }
-  } catch (e) {
-    ElMessage.error('操作失败')
-  } finally {
-    row.revectorizing = false
+// 4. 打开新增/编辑弹窗
+const openDialog = (type: 'add' | 'edit', row?: any) => {
+  dialogType.value = type
+  dialogVisible.value = true
+  fileList.value = [] // 清空上传列表
+  
+  if (type === 'edit' && row) {
+    formData.id = row.id
+    formData.title = row.title
+    formData.projectId = row.projectId
+    // 编辑模式下，不强制要求重新上传文件，除非用户想替换
+    formData.file = null 
+  } else {
+    // 新增模式重置表单
+    formData.id = undefined
+    formData.title = ''
+    formData.projectId = undefined
+    formData.file = null
   }
 }
 
-const handleDelete = (row: any) => {
-  ElMessageBox.confirm('确认删除?', '提示').then(async () => {
-    await deleteKnowledgeAPI(row.id)
-    ElMessage.success('删除成功')
-    fetchList()
+// 5. 文件变更监听
+const handleFileChange: UploadProps['onChange'] = (uploadFile) => {
+  if (uploadFile.raw) {
+    formData.file = uploadFile.raw
+    // 如果没有输入标题，自动填充文件名（去掉后缀）
+    if (!formData.title) {
+      const name = uploadFile.name
+      formData.title = name.substring(0, name.lastIndexOf('.'))
+    }
+  }
+  // 保持单文件上传
+  if (fileList.value.length > 1) {
+    fileList.value.splice(0, 1)
+  }
+}
+
+// 6. 提交表单（上传/更新）
+const handleSubmit = async () => {
+  if (!formRef.value) return
+  
+  await formRef.value.validate(async (valid: boolean) => {
+    if (valid) {
+      // 校验文件（新增必须有文件，编辑可选）
+      if (dialogType.value === 'add' && !formData.file) {
+        ElMessage.warning('请上传文档文件')
+        return
+      }
+
+      submitLoading.value = true
+      try {
+        // 构建 FormData
+        const payload = new FormData()
+        payload.append('title', formData.title)
+        if (formData.projectId) {
+          payload.append('projectId', formData.projectId.toString())
+        }
+        if (formData.file) {
+          payload.append('file', formData.file)
+        }
+
+        if (dialogType.value === 'add') {
+          await uploadKnowledgeAPI(payload)
+          ElMessage.success('上传成功，后台正在进行向量化处理...')
+        } else {
+          // 编辑
+          if (formData.id) {
+            await updateKnowledgeAPI(formData.id, payload)
+            ElMessage.success('更新成功')
+          }
+        }
+        
+        dialogVisible.value = false
+        getList()
+      } catch (error) {
+        // 错误处理
+      } finally {
+        submitLoading.value = false
+      }
+    }
   })
 }
 
-const handlePreview = (row: any) => {
-  if (row.fileUrl) {
-    window.open(row.fileUrl, '_blank')
-  } else {
-    ElMessage.warning('暂无文件地址')
+// 7. 删除文档
+const handleDelete = (row: any) => {
+  ElMessageBox.confirm(
+    `确定要删除文档 "${row.title}" 吗？删除后相关的问答知识将失效。`,
+    '警告',
+    { type: 'warning', confirmButtonText: '确定删除', cancelButtonText: '取消' }
+  ).then(async () => {
+    await deleteKnowledgeAPI(row.id)
+    ElMessage.success('删除成功')
+    getList()
+  })
+}
+
+// 8. 重新向量化
+const handleRevectorize = async (row: any) => {
+  try {
+    loading.value = true
+    await revectorizeKnowledgeAPI(row.id)
+    ElMessage.success('已触发重新向量化任务')
+    getList() // 刷新状态
+  } finally {
+    loading.value = false
   }
 }
 
+// 9. 分页
+const handleCurrentChange = (val: number) => {
+  queryParams.current = val
+  getList()
+}
+
+// 10. 状态字典映射
+const getStatusTag = (status: string) => {
+  const map: Record<string, { type: string, label: string }> = {
+    'completed': { type: 'success', label: '已完成' },
+    'processing': { type: 'warning', label: '处理中' },
+    'failed': { type: 'danger', label: '失败' },
+    'pending': { type: 'info', label: '等待中' }
+  }
+  return map[status] || { type: 'info', label: status || '未知' }
+}
+
+// 初始化
 onMounted(() => {
-  fetchList()
+  getProjectList()
+  getList()
 })
 </script>
 
+<template>
+  <div class="app-container">
+    <el-card shadow="never" class="search-card">
+      <el-form :inline="true" :model="queryParams">
+        <el-form-item label="文档标题">
+          <el-input v-model="queryParams.title" placeholder="请输入标题关键词" clearable @keyup.enter="handleSearch" />
+        </el-form-item>
+        <el-form-item label="关联项目">
+          <el-select v-model="queryParams.projectId" placeholder="选择关联项目" clearable style="width: 200px">
+            <el-option
+              v-for="item in projectOptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :icon="Search" @click="handleSearch">搜索</el-button>
+          <el-button :icon="Refresh" @click="handleReset">重置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card shadow="never" class="table-card">
+      <div class="toolbar">
+        <el-button type="primary" :icon="Upload" @click="openDialog('add')">上传新文档</el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="tableData" border style="width: 100%">
+        <el-table-column prop="id" label="ID" width="80" align="center" />
+        
+        <el-table-column label="文档信息" min-width="200">
+          <template #default="{ row }">
+            <div style="display: flex; align-items: center;">
+              <el-icon class="mr-2"><Document /></el-icon>
+              <span style="margin-left: 8px; font-weight: 500;">{{ row.title }}</span>
+            </div>
+            <div style="font-size: 12px; color: #999; margin-left: 24px;">
+              文件名: {{ row.fileUrl ? row.fileUrl.split('/').pop() : '未知' }}
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="关联项目" width="150" align="center">
+          <template #default="{ row }">
+            <el-tag effect="plain">{{ projectOptions.find(p => p.id === row.projectId)?.name || row.projectId }}</el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="切片状态" width="120" align="center">
+          <template #default="{ row }">
+            <el-tag :type="getStatusTag(row.status).type as any">
+              {{ getStatusTag(row.status).label }}
+            </el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column prop="chunkCount" label="切片数" width="100" align="center" />
+        
+        <el-table-column prop="createdAt" label="上传时间" width="180" align="center" />
+
+        <el-table-column label="操作" width="220" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openDialog('edit', row)">编辑</el-button>
+            <el-button link type="warning" @click="handleRevectorize(row)">重新向量化</el-button>
+            <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pagination">
+        <el-pagination
+          v-model:current-page="queryParams.current"
+          v-model:page-size="queryParams.pageSize"
+          :total="total"
+          :page-sizes="[10, 20, 50]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="handleCurrentChange"
+          @size-change="handleSearch"
+        />
+      </div>
+    </el-card>
+
+    <el-dialog
+      v-model="dialogVisible"
+      :title="dialogType === 'add' ? '上传文档' : '编辑文档'"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <el-form ref="formRef" :model="formData" :rules="rules" label-width="100px">
+        <el-form-item label="文档标题" prop="title">
+          <el-input v-model="formData.title" placeholder="请输入文档展示标题" />
+        </el-form-item>
+        
+        <el-form-item label="关联项目" prop="projectId">
+          <el-select v-model="formData.projectId" placeholder="请选择关联非遗项目" style="width: 100%">
+            <el-option
+              v-for="item in projectOptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="文档文件" :required="dialogType === 'add'">
+          <el-upload
+            ref="uploadRef"
+            class="upload-demo"
+            action="#"
+            :auto-upload="false"
+            :on-change="handleFileChange"
+            :file-list="fileList"
+            :limit="1"
+            accept=".pdf,.doc,.docx,.txt,.md"
+          >
+            <template #trigger>
+              <el-button type="primary">选择文件</el-button>
+            </template>
+            <template #tip>
+              <div class="el-upload__tip">
+                支持 PDF/Word/TXT/Markdown，上传后系统将自动切片并向量化。
+              </div>
+            </template>
+          </el-upload>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="submitLoading" @click="handleSubmit">
+            {{ dialogType === 'add' ? '开始上传' : '保存修改' }}
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
 <style scoped>
-.app-container { padding: 20px; }
-.pagination-container { margin-top: 20px; display: flex; justify-content: flex-end; }
+.app-container {
+  padding: 20px;
+  background-color: #f0f2f5;
+  min-height: calc(100vh - 84px);
+}
+.search-card {
+  margin-bottom: 20px;
+}
+.table-card {
+  min-height: 500px;
+}
+.toolbar {
+  margin-bottom: 20px;
+}
+.pagination {
+  margin-top: 20px;
+  display: flex;
+  justify-content: flex-end;
+}
 </style>

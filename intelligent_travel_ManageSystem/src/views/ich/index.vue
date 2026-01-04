@@ -1,246 +1,349 @@
-<template>
-  <div class="app-container">
-    <el-card shadow="never" class="mb-4">
-      <el-form :inline="true" :model="queryParams">
-        <el-form-item label="项目名称">
-          <el-input v-model="queryParams.name" placeholder="请输入名称" clearable @keyup.enter="handleQuery" />
-        </el-form-item>
-        <el-form-item label="城市">
-          <el-input v-model="queryParams.city" placeholder="请输入城市" clearable />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
-          <el-button type="success" icon="Plus" @click="handleAdd">新增项目</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <el-table v-loading="loading" :data="tableData" border style="width: 100%">
-      <el-table-column prop="id" label="ID" width="80" align="center" />
-      <el-table-column prop="name" label="项目名称" min-width="120" />
-      <el-table-column label="封面图" width="100" align="center">
-        <template #default="{ row }">
-          <el-image 
-            :src="row.imageUrl" 
-            :preview-src-list="[row.imageUrl]" 
-            fit="cover" 
-            style="width: 50px; height: 50px; border-radius: 4px;"
-          >
-            <template #error>
-              <div class="image-slot">
-                <el-icon><Picture /></el-icon>
-              </div>
-            </template>
-          </el-image>
-        </template>
-      </el-table-column>
-      <el-table-column prop="category" label="类别" width="120" />
-      <el-table-column prop="city" label="城市" width="100" />
-      <el-table-column prop="isIndoor" label="场所类型" width="100">
-        <template #default="{ row }">
-          <el-tag :type="row.isIndoor === 1 ? 'info' : 'success'">
-            {{ row.isIndoor === 1 ? '室内' : '室外' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="300" fixed="right" align="center">
-        <template #default="{ row }">
-          <el-button link type="primary" icon="Edit" @click="handleEdit(row)">编辑</el-button>
-          <el-button link type="warning" icon="Picture" @click="handleMedia(row)">媒体管理</el-button>
-          <el-button link type="danger" icon="Delete" @click="handleDelete(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <div class="pagination-container">
-      <el-pagination
-        v-model:current-page="queryParams.current"
-        v-model:page-size="queryParams.pageSize"
-        :total="total"
-        layout="total, sizes, prev, pager, next, jumper"
-        @size-change="handleQuery"
-        @current-change="handleQuery"
-      />
-    </div>
-
-    <el-dialog :title="dialogTitle" v-model="dialogVisible" width="600px" append-to-body>
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
-        <el-form-item label="项目名称" prop="name">
-          <el-input v-model="form.name" placeholder="请输入非遗项目名称" />
-        </el-form-item>
-        <el-form-item label="类别" prop="category">
-          <el-input v-model="form.category" placeholder="如：传统美术" />
-        </el-form-item>
-        <el-form-item label="城市" prop="city">
-          <el-input v-model="form.city" placeholder="如：广州市" />
-        </el-form-item>
-        <el-form-item label="封面图" prop="imageUrl">
-          <el-upload
-            action="/api/file/test/upload"
-            :show-file-list="false"
-            :on-success="handleCoverSuccess"
-            class="avatar-uploader"
-          >
-            <img v-if="form.imageUrl" :src="form.imageUrl" class="avatar" style="width: 100px; height: 100px; display: block;" />
-            <el-icon v-else class="avatar-uploader-icon" style="font-size: 28px; color: #8c939d; width: 100px; height: 100px; line-height: 100px; text-align: center; border: 1px dashed #d9d9d9;"><Plus /></el-icon>
-          </el-upload>
-        </el-form-item>
-        <el-form-item label="地理位置">
-          <MapPicker v-model:lat="form.lat" v-model:lng="form.lng" />
-        </el-form-item>
-        <el-form-item label="场所类型">
-          <el-radio-group v-model="form.isIndoor">
-            <el-radio :label="1">室内</el-radio>
-            <el-radio :label="0">室外</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="描述" prop="description">
-          <el-input v-model="form.description" type="textarea" :rows="3" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确 定</el-button>
-      </template>
-    </el-dialog>
-
-    <ICIMedia ref="mediaRef" />
-  </div>
-</template>
-
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { getICHListAPI, addICHProjectAPI, updateICHProjectAPI, deleteICHProjectAPI } from '@/api/ich'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Picture } from '@element-plus/icons-vue'
-import ICIMedia from '@/components/ICIMedia.vue'
-import MapPicker from '@/components/MapPicker/index.vue'
+import type { UploadRequestOptions } from 'element-plus'
+import { Search, Plus, Edit, Delete, Picture as IconPicture } from '@element-plus/icons-vue'
 
-// 状态定义
+import { 
+  getICHListAPI, 
+  addICHProjectAPI, 
+  updateICHProjectAPI, 
+  deleteICHProjectAPI 
+} from '@/api/ich'
+import { uploadFileAPI } from '@/api/file'
+import ICIMedia from '@/components/ICIMedia.vue'
+
+// === 数据定义 ===
 const loading = ref(false)
 const tableData = ref([])
 const total = ref(0)
-const dialogVisible = ref(false)
-const dialogTitle = ref('')
-const mediaRef = ref()
-const formRef = ref()
 
+// 查询参数
 const queryParams = reactive({
   current: 1,
   pageSize: 10,
   name: '',
-  city: ''
+  city: '',
+  category: ''
 })
 
-const form = reactive({
-  id: undefined,
+// 表单控制
+const dialogVisible = ref(false)
+const dialogType = ref<'add' | 'edit'>('add')
+const submitLoading = ref(false)
+const formRef = ref()
+
+// 表单数据模型
+const formData = reactive({
+  id: undefined as number | undefined,
   name: '',
   category: '',
   city: '',
-  imageUrl: '',
+  description: '',
+  imageUrl: '', // 封面图 URL
+  isIndoor: 0,  // 0: 室外, 1: 室内
   lat: undefined as number | undefined,
-  lng: undefined as number | undefined,
-  isIndoor: 1,
-  description: ''
+  lng: undefined as number | undefined
 })
 
+// 媒体管理弹窗控制
+const mediaDialogVisible = ref(false)
+const currentProjectId = ref<number>(0)
+const currentProjectName = ref('')
+
+// 字典数据
+const categoryOptions = ['传统美术', '传统技艺', '传统戏剧', '传统舞蹈', '民俗']
+const cityOptions = ['广州市', '佛山市', '深圳市', '东莞市']
+
+// 表单校验规则
 const rules = {
-  name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
-  city: [{ required: true, message: '请输入城市', trigger: 'blur' }]
+  name: [{ required: true, message: '请输入项目名称', trigger: 'blur' }],
+  category: [{ required: true, message: '请选择类别', trigger: 'change' }],
+  city: [{ required: true, message: '请选择城市', trigger: 'change' }]
 }
 
-// 方法
-const handleQuery = async () => {
+// === 方法实现 ===
+
+// 1. 获取列表
+const getList = async () => {
   loading.value = true
   try {
-    // 修复：这里加了 : any 类型断言，解决 AxiosResponse 上没有 code 属性的报错
-    const res: any = await getICHListAPI(queryParams)
-    if (res.code === 0) {
-      tableData.value = res.data.records
-      total.value = res.data.total
-    }
+    const res = await getICHListAPI(queryParams)
+    tableData.value = res.data.records
+    total.value = res.data.total
   } finally {
     loading.value = false
   }
 }
 
-const handleAdd = () => {
-  dialogTitle.value = '新增非遗项目'
+// 2. 搜索重置
+const handleSearch = () => {
+  queryParams.current = 1
+  getList()
+}
+const handleReset = () => {
+  queryParams.name = ''
+  queryParams.city = ''
+  queryParams.category = ''
+  handleSearch()
+}
+
+// 3. 打开新增/编辑弹窗
+const openDialog = (type: 'add' | 'edit', row?: any) => {
+  dialogType.value = type
   dialogVisible.value = true
-  // 重置表单
-  Object.assign(form, {
-    id: undefined,
-    name: '',
-    category: '',
-    city: '',
-    imageUrl: '',
-    lat: undefined,
-    lng: undefined,
-    isIndoor: 1,
-    description: ''
-  })
-}
-
-const handleEdit = (row: any) => {
-  dialogTitle.value = '编辑非遗项目'
-  dialogVisible.value = true
-  // 浅拷贝回填数据
-  Object.assign(form, row)
-}
-
-const handleDelete = (row: any) => {
-  ElMessageBox.confirm(`确认删除 "${row.name}" 吗？`, '警告', {
-    type: 'warning'
-  }).then(async () => {
-    await deleteICHProjectAPI(row.id)
-    ElMessage.success('删除成功')
-    handleQuery()
-  })
-}
-
-const handleMedia = (row: any) => {
-  mediaRef.value.open(row.id)
-}
-
-const handleCoverSuccess = (res: any) => {
-  if (res.code === 0) {
-    form.imageUrl = res.data
+  
+  if (type === 'edit' && row) {
+    // 填充表单
+    Object.assign(formData, row)
   } else {
+    // 重置表单
+    formData.id = undefined
+    formData.name = ''
+    formData.category = ''
+    formData.city = ''
+    formData.description = ''
+    formData.imageUrl = ''
+    formData.isIndoor = 0
+    formData.lat = undefined
+    formData.lng = undefined
+  }
+}
+
+// 4. 封面图片上传逻辑
+const handleAvatarUpload = async (options: UploadRequestOptions) => {
+  try {
+    const data = new FormData()
+    data.append('file', options.file)
+    const res = await uploadFileAPI(data)
+    // 设置表单图片的 URL
+    formData.imageUrl = res.data
+    ElMessage.success('封面上传成功')
+  } catch (error) {
     ElMessage.error('上传失败')
   }
 }
 
+// 5. 提交表单
 const handleSubmit = async () => {
   if (!formRef.value) return
   await formRef.value.validate(async (valid: boolean) => {
     if (valid) {
+      submitLoading.value = true
       try {
-        if (form.id) {
-          await updateICHProjectAPI(form.id, form)
-          ElMessage.success('更新成功')
+        if (dialogType.value === 'add') {
+          await addICHProjectAPI(formData)
+          ElMessage.success('新增成功')
         } else {
-          // 修复：这里通常也需要处理一下返回值
-          const res: any = await addICHProjectAPI(form)
-          if(res.code === 0) {
-              ElMessage.success('新增成功')
-          }
+          await updateICHProjectAPI(formData.id!, formData)
+          ElMessage.success('更新成功')
         }
         dialogVisible.value = false
-        handleQuery()
-      } catch (e) {
-        // request.ts 会处理错误提示，这里可留空
+        getList()
+      } finally {
+        submitLoading.value = false
       }
     }
   })
 }
 
+// 6. 删除项目
+const handleDelete = (row: any) => {
+  ElMessageBox.confirm(
+    `确定删除 "${row.name}" 吗？关联的商户可能无法正常展示。`,
+    '警告',
+    { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' }
+  ).then(async () => {
+    await deleteICHProjectAPI(row.id)
+    ElMessage.success('删除成功')
+    getList()
+  })
+}
+
+// 7. 打开媒体管理
+const openMediaDialog = (row: any) => {
+  currentProjectId.value = row.id
+  currentProjectName.value = row.name
+  mediaDialogVisible.value = true
+}
+
+// 8. 分页
+const handleCurrentChange = (val: number) => {
+  queryParams.current = val
+  getList()
+}
+
 onMounted(() => {
-  handleQuery()
+  getList()
 })
 </script>
 
+<template>
+  <div class="app-container">
+    <el-card shadow="never" class="search-card">
+      <el-form :inline="true" :model="queryParams">
+        <el-form-item label="项目名称">
+          <el-input v-model="queryParams.name" placeholder="支持模糊搜索" clearable @keyup.enter="handleSearch" />
+        </el-form-item>
+        <el-form-item label="类别">
+          <el-select v-model="queryParams.category" placeholder="全部" clearable style="width: 140px">
+            <el-option v-for="item in categoryOptions" :key="item" :label="item" :value="item" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="城市">
+          <el-select v-model="queryParams.city" placeholder="全部" clearable style="width: 140px">
+            <el-option v-for="item in cityOptions" :key="item" :label="item" :value="item" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :icon="Search" @click="handleSearch">搜索</el-button>
+          <el-button @click="handleReset">重置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card shadow="never">
+      <div class="toolbar">
+        <el-button type="primary" :icon="Plus" @click="openDialog('add')">新增非遗项目</el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="tableData" border stripe>
+        <el-table-column prop="id" label="ID" width="80" align="center" />
+        
+        <el-table-column label="封面" width="100" align="center">
+          <template #default="{ row }">
+            <el-image 
+              style="width: 60px; height: 60px; border-radius: 4px;" 
+              :src="row.imageUrl" 
+              fit="cover"
+              :preview-src-list="[row.imageUrl]" 
+              preview-teleported
+            >
+              <template #error>
+                <div class="image-slot"><el-icon><IconPicture /></el-icon></div>
+              </template>
+            </el-image>
+          </template>
+        </el-table-column>
+
+        <el-table-column prop="name" label="项目名称" min-width="120" />
+        <el-table-column prop="category" label="类别" width="120" align="center">
+          <template #default="{ row }">
+            <el-tag>{{ row.category }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="city" label="城市" width="100" align="center" />
+        
+        <el-table-column label="场所类型" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.isIndoor ? 'warning' : 'success'" effect="plain">
+              {{ row.isIndoor ? '室内' : '室外' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="操作" width="260" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button link type="primary" :icon="Edit" @click="openDialog('edit', row)">编辑</el-button>
+            <el-button link type="success" :icon="IconPicture" @click="openMediaDialog(row)">资源管理</el-button>
+            <el-button link type="danger" :icon="Delete" @click="handleDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pagination">
+        <el-pagination
+          v-model:current-page="queryParams.current"
+          v-model:page-size="queryParams.pageSize"
+          :total="total"
+          layout="total, prev, pager, next"
+          @current-change="handleCurrentChange"
+        />
+      </div>
+    </el-card>
+
+    <el-dialog v-model="dialogVisible" :title="dialogType === 'add' ? '新增项目' : '编辑项目'" width="600px">
+      <el-form ref="formRef" :model="formData" :rules="rules" label-width="100px">
+        <el-form-item label="项目名称" prop="name">
+          <el-input v-model="formData.name" placeholder="如：广绣" />
+        </el-form-item>
+        
+        <el-form-item label="项目封面">
+          <el-upload
+            class="avatar-uploader"
+            action="#"
+            :show-file-list="false"
+            :http-request="handleAvatarUpload"
+            accept="image/*"
+          >
+            <img v-if="formData.imageUrl" :src="formData.imageUrl" class="avatar" />
+            <el-icon v-else class="avatar-uploader-icon"><Plus /></el-icon>
+          </el-upload>
+          <div class="tips">点击上传封面图，建议尺寸 1:1</div>
+        </el-form-item>
+
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="类别" prop="category">
+              <el-select v-model="formData.category" style="width: 100%">
+                <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="城市" prop="city">
+              <el-select v-model="formData.city" style="width: 100%">
+                <el-option v-for="c in cityOptions" :key="c" :label="c" :value="c" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-form-item label="场所属性">
+          <el-radio-group v-model="formData.isIndoor">
+            <el-radio :label="0">室外 (适合晴天)</el-radio>
+            <el-radio :label="1">室内 (适合雨天)</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item label="项目描述">
+          <el-input v-model="formData.description" type="textarea" :rows="4" placeholder="请输入项目简介..." />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitLoading" @click="handleSubmit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="mediaDialogVisible" :title="`资源管理 - ${currentProjectName}`" width="800px">
+      <ICIMedia v-if="mediaDialogVisible" :project-id="currentProjectId" />
+    </el-dialog>
+  </div>
+</template>
+
 <style scoped>
-.app-container { padding: 20px; }
-.mb-4 { margin-bottom: 20px; }
-.pagination-container { margin-top: 20px; display: flex; justify-content: flex-end; }
+.app-container { padding: 20px; background: #f0f2f5; min-height: calc(100vh - 84px); }
+.search-card { margin-bottom: 20px; }
+.toolbar { margin-bottom: 20px; }
+.pagination { margin-top: 20px; display: flex; justify-content: flex-end; }
+.image-slot { display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; background: #f5f7fa; color: #909399; }
+
+/* 封面上传样式 */
+.avatar-uploader {
+  border: 1px dashed #d9d9d9;
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  width: 100px;
+  height: 100px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.avatar-uploader:hover { border-color: #409EFF; }
+.avatar-uploader-icon { font-size: 28px; color: #8c939d; }
+.avatar { width: 100px; height: 100px; display: block; object-fit: cover; }
+.tips { font-size: 12px; color: #999; margin-top: 5px; }
 </style>

@@ -1,178 +1,195 @@
-<template>
-  <el-drawer
-    v-model="visible"
-    title="非遗项目 - 多媒体资源管理"
-    size="50%"
-    @open="fetchData"
-  >
-    <div class="media-container" v-loading="loading">
-      <el-card shadow="never" class="mb-4">
-        <template #header>
-          <div class="card-header">
-            <span>新增资源</span>
-          </div>
-        </template>
-        <el-form :inline="true" :model="form" class="demo-form-inline">
-          <el-form-item label="标题">
-            <el-input v-model="form.title" placeholder="如：制作工艺展示" clearable />
-          </el-form-item>
-          <el-form-item label="类型">
-            <el-select v-model="form.mediaType" placeholder="类型" style="width: 100px">
-              <el-option label="图片" value="image" />
-              <el-option label="视频" value="video" />
-            </el-select>
-          </el-form-item>
-          <el-form-item>
-             <el-upload
-              class="upload-demo"
-              action="/api/file/test/upload"
-              :show-file-list="false"
-              :on-success="handleUploadSuccess"
-              :before-upload="beforeUpload"
-              :on-error="handleUploadError"
-            >
-               <el-button type="primary" :loading="uploading" icon="Upload">上传并添加</el-button>
-            </el-upload>
-          </el-form-item>
-        </el-form>
-      </el-card>
-
-      <el-table :data="mediaList" stripe style="width: 100%" border>
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column label="预览" width="160">
-          <template #default="{ row }">
-            <el-image 
-              v-if="row.mediaType === 'image'" 
-              :src="row.mediaUrl" 
-              :preview-src-list="[row.mediaUrl]"
-              style="width: 120px; height: 80px; border-radius: 4px;" 
-              fit="cover" 
-            />
-            <video 
-              v-else 
-              :src="row.mediaUrl" 
-              style="width: 120px; height: 80px; border-radius: 4px;" 
-              controls 
-            />
-          </template>
-        </el-table-column>
-        <el-table-column prop="title" label="标题" />
-        <el-table-column prop="mediaType" label="类型" width="100">
-           <template #default="{ row }">
-             <el-tag :type="row.mediaType === 'video' ? 'warning' : 'success'">
-               {{ row.mediaType === 'video' ? '视频' : '图片' }}
-             </el-tag>
-           </template>
-        </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
-          <template #default="{ row }">
-            <el-button type="danger" size="small" icon="Delete" circle @click="handleDelete(row.id)"></el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </div>
-  </el-drawer>
-</template>
-
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
-import { getICHMediaListAPI, addICHMediaAPI, deleteICHMediaAPI } from '@/api/ich'
+import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus, Delete, VideoPlay, Picture } from '@element-plus/icons-vue'
+import type { UploadRequestOptions } from 'element-plus'
+import { getICHMediaListAPI, addICHMediaAPI, deleteICHMediaAPI } from '@/api/ich'
+import { uploadFileAPI } from '@/api/file'
 
-const visible = ref(false)
-const projectId = ref<number>(0)
+// 接收父组件传入的 projectId
+const props = defineProps<{
+  projectId: number
+}>()
+
 const loading = ref(false)
-const uploading = ref(false)
-const mediaList = ref([])
+const mediaList = ref<any[]>([])
+const uploadLoading = ref(false)
 
-const form = reactive({
-  title: '',
-  mediaType: 'image',
-  mediaUrl: ''
-})
-
-// 对外暴露 open 方法
-const open = (id: number) => {
-  projectId.value = id
-  visible.value = true
-  // 重置表单
-  form.title = ''
-  form.mediaType = 'image'
-  form.mediaUrl = ''
-}
-
-const fetchData = async () => {
-  if (!projectId.value) return
+// 获取媒体列表
+const fetchMediaList = async () => {
+  if (!props.projectId) return
   loading.value = true
   try {
-    // 修复：添加 : any 类型断言，解决 res.code 报错
-    const res: any = await getICHMediaListAPI(projectId.value)
-    if (res.code === 0) {
-      mediaList.value = res.data
-    }
+    const res = await getICHMediaListAPI(props.projectId)
+    mediaList.value = res.data
   } finally {
     loading.value = false
   }
 }
 
-const beforeUpload = () => {
-  if (!form.title) {
-    ElMessage.warning('请先填写标题')
-    return false
-  }
-  uploading.value = true
-  return true
-}
+// 监听 projectId 变化，自动刷新列表
+watch(() => props.projectId, (newVal) => {
+  if (newVal) fetchMediaList()
+}, { immediate: true })
 
-const handleUploadError = () => {
-  uploading.value = false
-  ElMessage.error('文件上传失败，请检查网络或文件大小')
-}
+// 自定义上传逻辑
+const handleUpload = async (options: UploadRequestOptions) => {
+  uploadLoading.value = true
+  try {
+    // 1. 先上传文件到 COS/OSS
+    const formData = new FormData()
+    formData.append('file', options.file)
+    const fileRes = await uploadFileAPI(formData)
+    const fileUrl = fileRes.data // 假设后端返回 { code: 0, data: "url" }
 
-const handleUploadSuccess = async (response: any) => {
-  uploading.value = false
-  // 注意：根据后端API文档，返回结构是 { code: 0, data: "url_string", message: "ok" }
-  if (response.code === 0) {
-    const url = response.data
-    try {
-      // 修复：添加 : any 类型断言，确保 res.code 访问不报错
-      const res: any = await addICHMediaAPI({
-        projectId: projectId.value,
-        mediaType: form.mediaType as 'image' | 'video',
-        mediaUrl: url,
-        title: form.title
-      })
-      
-      if (res.code === 0) {
-        ElMessage.success('添加成功')
-        fetchData() // 刷新列表
-        form.title = '' // 清空标题方便下一次
-      }
-    } catch (e) {
-      ElMessage.error('保存媒体记录失败')
-    }
-  } else {
-    ElMessage.error(response.message || '文件上传异常')
+    // 2. 判断类型
+    const isVideo = options.file.type.startsWith('video/')
+    
+    // 3. 调用业务接口新增媒体记录
+    await addICHMediaAPI({
+      projectId: props.projectId,
+      mediaType: isVideo ? 'video' : 'image',
+      mediaUrl: fileUrl,
+      title: options.file.name
+    })
+
+    ElMessage.success('上传成功')
+    fetchMediaList() // 刷新列表
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('上传失败')
+  } finally {
+    uploadLoading.value = false
   }
 }
 
-const handleDelete = (id: number) => {
-  ElMessageBox.confirm('确定删除该资源吗?', '提示', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning',
+// 删除媒体
+const handleDelete = (item: any) => {
+  ElMessageBox.confirm('确定删除该资源吗？', '提示', {
+    type: 'warning'
   }).then(async () => {
-    // 修复：添加 : any 类型断言（虽然通常delete不检查返回值，但为了统一风格）
-    await deleteICHMediaAPI(id)
+    await deleteICHMediaAPI(item.id)
     ElMessage.success('删除成功')
-    fetchData()
+    fetchMediaList()
   })
 }
-
-defineExpose({ open })
 </script>
 
+<template>
+  <div class="media-container" v-loading="loading">
+    <div class="header">
+      <el-upload
+        action="#"
+        :http-request="handleUpload"
+        :show-file-list="false"
+        accept="image/*,video/*"
+        :disabled="uploadLoading"
+      >
+        <el-button type="primary" :icon="Plus" :loading="uploadLoading">上传图片/视频</el-button>
+      </el-upload>
+      <span class="tips">支持 jpg, png, mp4 格式</span>
+    </div>
+
+    <div v-if="mediaList.length > 0" class="media-grid">
+      <div v-for="item in mediaList" :key="item.id" class="media-card">
+        <div class="media-content">
+          <el-image 
+            v-if="item.mediaType === 'image'" 
+            :src="item.mediaUrl" 
+            fit="cover"
+            class="media-img"
+            :preview-src-list="[item.mediaUrl]"
+            preview-teleported
+          />
+          <video 
+            v-else 
+            :src="item.mediaUrl" 
+            class="media-video" 
+            controls 
+            preload="metadata"
+          ></video>
+          
+          <div class="type-badge">
+            <el-icon v-if="item.mediaType === 'video'"><VideoPlay /></el-icon>
+            <el-icon v-else><Picture /></el-icon>
+          </div>
+        </div>
+        
+        <div class="media-footer">
+          <span class="media-title" :title="item.title">{{ item.title || '无标题' }}</span>
+          <el-button type="danger" :icon="Delete" circle size="small" @click="handleDelete(item)" />
+        </div>
+      </div>
+    </div>
+    
+    <el-empty v-else description="暂无媒体资源，请点击上方按钮上传" />
+  </div>
+</template>
+
 <style scoped>
-.mb-4 { margin-bottom: 16px; }
-.media-container { padding: 0 20px; }
+.header {
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+.tips {
+  font-size: 12px;
+  color: #999;
+}
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 15px;
+  max-height: 500px;
+  overflow-y: auto;
+}
+.media-card {
+  border: 1px solid #eee;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  transition: all 0.3s;
+}
+.media-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.media-content {
+  position: relative;
+  height: 150px;
+  background: #f5f7fa;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.media-img, .media-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.type-badge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.media-footer {
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid #eee;
+}
+.media-title {
+  font-size: 12px;
+  color: #666;
+  width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 </style>

@@ -1,10 +1,22 @@
 <script setup lang="ts">
+import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useUserStore } from '@/store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 // 引入所有需要的图标
-import { Odometer, Reading, GoldMedal, Shop, Document } from '@element-plus/icons-vue'
+import { Odometer, Reading, GoldMedal, Shop } from '@element-plus/icons-vue'
 
 const router = useRouter()
+const userStore = useUserStore()
+
+// 页面加载时获取用户信息（保持登录状态）
+onMounted(() => {
+  if (!userStore.userInfo) {
+    userStore.getUserInfo().catch(() => {
+      // 如果获取失败（如未登录），可以在这里处理，request.ts 也会拦截
+    })
+  }
+})
 
 // 退出登录处理函数
 const handleLogout = () => {
@@ -12,18 +24,15 @@ const handleLogout = () => {
     confirmButtonText: '确定',
     cancelButtonText: '取消',
     type: 'warning'
-  }).then(() => {
-    // 1. 清除本地存储的 Token 和用户信息
-    // 根据你的实际存储方式清理，这里把常见的都清一遍
-    localStorage.removeItem('token')
-    localStorage.removeItem('userInfo')
-    sessionStorage.clear()
+  }).then(async () => {
+    // 1. 调用 Store 的登出方法 (包含 API 调用和状态清除)
+    await userStore.logout()
     
     // 2. 提示成功
     ElMessage.success('已安全退出')
     
-    // 3. 强制跳转回登录页
-    router.push('/login')
+    // 3. 跳转回登录页
+    router.replace('/login')
   }).catch(() => {
     // 取消退出，不做任何操作
   })
@@ -79,7 +88,12 @@ const handleLogout = () => {
       <el-container>
         <el-header class="header">
           <div class="breadcrumb">非遗文化智能伴游系统 - 管理后台</div>
-          <el-button type="danger" link @click="handleLogout">退出登录</el-button>
+          <div class="right-menu">
+            <span class="username" v-if="userStore.userInfo">
+              {{ userStore.userInfo.userName || userStore.userInfo.email }}
+            </span>
+            <el-button type="danger" link @click="handleLogout">退出登录</el-button>
+          </div>
         </el-header>
         
         <el-main>
@@ -112,13 +126,23 @@ const handleLogout = () => {
   border-bottom: 1px solid #eee; 
   background-color: #fff;
   height: 60px;
+  padding: 0 20px;
+}
+
+.right-menu {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+.username {
+  font-size: 14px;
+  color: #606266;
 }
 
 .el-menu-vertical {
   border-right: none;
 }
 
-/* 菜单样式微调 */
 :deep(.el-sub-menu__title) {
   color: #fff !important;
 }
