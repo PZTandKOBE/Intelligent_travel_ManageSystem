@@ -1,25 +1,24 @@
+// src/api/knowledge.ts
 import request from '@/utils/request'
 
-// 获取文档列表
-export const getKnowledgeListAPI = (data: any) => {
-  return request({
-    url: '/knowledge/list',
-    method: 'post',
-    data
-  })
-}
-
-// 上传文档
-export const uploadKnowledgeAPI = (formData: FormData) => {
+// 上传知识库文档
+export const uploadKnowledgeAPI = (data: FormData) => {
   return request({
     url: '/knowledge/upload',
-    method: 'post',
-    timeout: 60000, // 可选：增加超时时间，防止大文件上传超时
-    data: formData,
-    // 关键点：让 axios 自动处理 Content-Type，避免 boundary 丢失错误
+    method: 'POST',
+    data,
     headers: {
       'Content-Type': 'multipart/form-data'
     }
+  })
+}
+
+// 获取知识库列表
+export const getKnowledgeListAPI = (data: any) => {
+  return request({
+    url: '/knowledge/list',
+    method: 'POST',
+    data
   })
 }
 
@@ -27,14 +26,26 @@ export const uploadKnowledgeAPI = (formData: FormData) => {
 export const deleteKnowledgeAPI = (id: number) => {
   return request({
     url: `/knowledge/${id}`,
-    method: 'delete'
+    method: 'DELETE'
   })
 }
 
+// === 新增部分 ===
+
 // 重新向量化
-export const revectorizeAPI = (id: number) => {
+export const revectorizeKnowledgeAPI = (id: number) => {
   return request({
     url: `/knowledge/revectorize/${id}`,
-    method: 'post'
+    method: 'POST'
+  })
+}
+
+// 更新文档
+export const updateKnowledgeAPI = (id: number, data: FormData) => {
+  return request({
+    url: `/knowledge/update/${id}`,
+    method: 'PUT',
+    data,
+    headers: { 'Content-Type': 'multipart/form-data' }
   })
 }
