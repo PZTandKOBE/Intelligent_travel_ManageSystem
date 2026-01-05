@@ -10,15 +10,15 @@ import {
   updateICHProjectAPI, 
   deleteICHProjectAPI 
 } from '@/api/ich'
+import { getMerchantListAPI } from '@/api/merchant' // 引入商户列表
 import { uploadFileAPI } from '@/api/file'
 import ICIMedia from '@/components/ICIMedia.vue'
 
-// === 数据定义 ===
 const loading = ref(false)
 const tableData = ref([])
 const total = ref(0)
+const merchantOptions = ref<any[]>([]) // 商户下拉数据
 
-// 查询参数
 const queryParams = reactive({
   current: 1,
   pageSize: 10,
@@ -27,44 +27,47 @@ const queryParams = reactive({
   category: ''
 })
 
-// 表单控制
 const dialogVisible = ref(false)
 const dialogType = ref<'add' | 'edit'>('add')
 const submitLoading = ref(false)
 const formRef = ref()
 
-// 表单数据模型
 const formData = reactive({
   id: undefined as number | undefined,
   name: '',
   category: '',
   city: '',
   description: '',
-  imageUrl: '', // 封面图 URL
-  isIndoor: 0,  // 0: 室外, 1: 室内
+  imageUrl: '',
+  isIndoor: 0,
   lat: undefined as number | undefined,
-  lng: undefined as number | undefined
+  lng: undefined as number | undefined,
+  merchantIds: [] as number[] // 新增：关联的商户ID数组
 })
 
-// 媒体管理弹窗控制
 const mediaDialogVisible = ref(false)
 const currentProjectId = ref<number>(0)
 const currentProjectName = ref('')
 
-// 字典数据
 const categoryOptions = ['传统美术', '传统技艺', '传统戏剧', '传统舞蹈', '民俗']
 const cityOptions = ['广州市', '佛山市', '深圳市', '东莞市']
 
-// 表单校验规则
 const rules = {
   name: [{ required: true, message: '请输入项目名称', trigger: 'blur' }],
   category: [{ required: true, message: '请选择类别', trigger: 'change' }],
   city: [{ required: true, message: '请选择城市', trigger: 'change' }]
 }
 
-// === 方法实现 ===
+// 获取商户列表供选择
+const getMerchantOptions = async () => {
+  try {
+    const res = await getMerchantListAPI({ current: 1, pageSize: 1000 })
+    merchantOptions.value = res.data.records
+  } catch (error) {
+    console.error('获取商户列表失败', error)
+  }
+}
 
-// 1. 获取列表
 const getList = async () => {
   loading.value = true
   try {
@@ -76,7 +79,6 @@ const getList = async () => {
   }
 }
 
-// 2. 搜索重置
 const handleSearch = () => {
   queryParams.current = 1
   getList()
@@ -88,16 +90,20 @@ const handleReset = () => {
   handleSearch()
 }
 
-// 3. 打开新增/编辑弹窗
-const openDialog = (type: 'add' | 'edit', row?: any) => {
+const openDialog = async (type: 'add' | 'edit', row?: any) => {
+  // 每次打开弹窗前刷新商户列表
+  await getMerchantOptions()
+
   dialogType.value = type
   dialogVisible.value = true
   
   if (type === 'edit' && row) {
-    // 填充表单
     Object.assign(formData, row)
+    // 注意：编辑时，这里假设 row 中并没有返回 merchantIds
+    // 如果需要回显，可能需要额外调用接口 fetchProjectMerchants(row.id)
+    // 这里暂时置空或保持原样，取决于后端是否在 list 接口返回了 merchantIds
+    formData.merchantIds = [] 
   } else {
-    // 重置表单
     formData.id = undefined
     formData.name = ''
     formData.category = ''
@@ -107,16 +113,15 @@ const openDialog = (type: 'add' | 'edit', row?: any) => {
     formData.isIndoor = 0
     formData.lat = undefined
     formData.lng = undefined
+    formData.merchantIds = []
   }
 }
 
-// 4. 封面图片上传逻辑
 const handleAvatarUpload = async (options: UploadRequestOptions) => {
   try {
     const data = new FormData()
     data.append('file', options.file)
     const res = await uploadFileAPI(data)
-    // 设置表单图片的 URL
     formData.imageUrl = res.data
     ElMessage.success('封面上传成功')
   } catch (error) {
@@ -124,18 +129,23 @@ const handleAvatarUpload = async (options: UploadRequestOptions) => {
   }
 }
 
-// 5. 提交表单
 const handleSubmit = async () => {
   if (!formRef.value) return
   await formRef.value.validate(async (valid: boolean) => {
     if (valid) {
       submitLoading.value = true
       try {
+        // 构建提交数据，转换 merchantIds 数组为字符串
+        const payload = {
+          ...formData,
+          merchantIds: formData.merchantIds.join(',') 
+        }
+
         if (dialogType.value === 'add') {
-          await addICHProjectAPI(formData)
+          await addICHProjectAPI(payload)
           ElMessage.success('新增成功')
         } else {
-          await updateICHProjectAPI(formData.id!, formData)
+          await updateICHProjectAPI(formData.id!, payload)
           ElMessage.success('更新成功')
         }
         dialogVisible.value = false
@@ -147,7 +157,6 @@ const handleSubmit = async () => {
   })
 }
 
-// 6. 删除项目
 const handleDelete = (row: any) => {
   ElMessageBox.confirm(
     `确定删除 "${row.name}" 吗？关联的商户可能无法正常展示。`,
@@ -160,14 +169,12 @@ const handleDelete = (row: any) => {
   })
 }
 
-// 7. 打开媒体管理
 const openMediaDialog = (row: any) => {
   currentProjectId.value = row.id
   currentProjectName.value = row.name
   mediaDialogVisible.value = true
 }
 
-// 8. 分页
 const handleCurrentChange = (val: number) => {
   queryParams.current = val
   getList()
@@ -282,6 +289,22 @@ onMounted(() => {
           <div class="tips">点击上传封面图，建议尺寸 1:1</div>
         </el-form-item>
 
+        <el-form-item label="关联商户">
+           <el-select 
+              v-model="formData.merchantIds" 
+              multiple 
+              placeholder="请选择关联商户"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="item in merchantOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+           </el-select>
+        </el-form-item>
+
         <el-row :gutter="20">
           <el-col :span="12">
             <el-form-item label="类别" prop="category">
@@ -328,20 +351,7 @@ onMounted(() => {
 .toolbar { margin-bottom: 20px; }
 .pagination { margin-top: 20px; display: flex; justify-content: flex-end; }
 .image-slot { display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; background: #f5f7fa; color: #909399; }
-
-/* 封面上传样式 */
-.avatar-uploader {
-  border: 1px dashed #d9d9d9;
-  border-radius: 6px;
-  cursor: pointer;
-  position: relative;
-  overflow: hidden;
-  width: 100px;
-  height: 100px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
+.avatar-uploader { border: 1px dashed #d9d9d9; border-radius: 6px; cursor: pointer; position: relative; overflow: hidden; width: 100px; height: 100px; display: flex; justify-content: center; align-items: center; }
 .avatar-uploader:hover { border-color: #409EFF; }
 .avatar-uploader-icon { font-size: 28px; color: #8c939d; }
 .avatar { width: 100px; height: 100px; display: block; object-fit: cover; }

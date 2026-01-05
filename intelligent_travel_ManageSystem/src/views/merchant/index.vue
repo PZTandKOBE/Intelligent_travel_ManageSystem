@@ -2,43 +2,36 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Edit, Delete } from '@element-plus/icons-vue'
-
 import { 
   getMerchantListAPI, 
   addMerchantAPI, 
   updateMerchantAPI, 
   deleteMerchantAPI 
 } from '@/api/merchant'
-import { getICHListAPI } from '@/api/ich'
 import MapPicker from '@/components/MapPicker/index.vue'
 
-// === 数据定义 ===
 const loading = ref(false)
 const tableData = ref([])
 const total = ref(0)
-const projectOptions = ref<any[]>([]) // 关联项目下拉
 
-// 查询参数
 const queryParams = reactive({
   current: 1,
   pageSize: 10,
   name: '',
-  category: '',
-  projectId: undefined as number | undefined
+  category: ''
+  // 移除 projectId 查询，因为现在关联逻辑变了
 })
 
-// 表单控制
 const dialogVisible = ref(false)
 const dialogType = ref<'add' | 'edit'>('add')
 const submitLoading = ref(false)
 const formRef = ref()
 
-// 表单数据
 const formData = reactive({
   id: undefined as number | undefined,
   name: '',
   category: '',
-  projectId: undefined as number | undefined,
+  // projectId: undefined, // 移除关联项目
   address: '',
   phone: '',
   lat: undefined as number | undefined,
@@ -47,33 +40,14 @@ const formData = reactive({
   relevanceScore: 80
 })
 
-// 字典数据
 const categoryOptions = ['体验馆', '文创店', '老字号', '博物馆', '研学基地']
 
-// 校验规则
 const rules = {
   name: [{ required: true, message: '请输入商户名称', trigger: 'blur' }],
   category: [{ required: true, message: '请选择商户类别', trigger: 'change' }],
-  projectId: [{ required: true, message: '请关联非遗项目', trigger: 'change' }],
   address: [{ required: true, message: '请输入详细地址', trigger: 'blur' }]
 }
 
-// === 方法实现 ===
-
-// 1. 初始化数据
-const initData = async () => {
-  // 并行获取商户列表和项目列表
-  getProjectList()
-  getList()
-}
-
-// 获取项目列表（用于下拉）
-const getProjectList = async () => {
-  const res = await getICHListAPI({ current: 1, pageSize: 100 })
-  projectOptions.value = res.data.records
-}
-
-// 获取商户列表
 const getList = async () => {
   loading.value = true
   try {
@@ -93,11 +67,9 @@ const handleSearch = () => {
 const handleReset = () => {
   queryParams.name = ''
   queryParams.category = ''
-  queryParams.projectId = undefined
   handleSearch()
 }
 
-// 2. 弹窗操作
 const openDialog = (type: 'add' | 'edit', row?: any) => {
   dialogType.value = type
   dialogVisible.value = true
@@ -105,11 +77,9 @@ const openDialog = (type: 'add' | 'edit', row?: any) => {
   if (type === 'edit' && row) {
     Object.assign(formData, row)
   } else {
-    // 重置
     formData.id = undefined
     formData.name = ''
     formData.category = ''
-    formData.projectId = undefined
     formData.address = ''
     formData.phone = ''
     formData.lat = undefined
@@ -119,18 +89,14 @@ const openDialog = (type: 'add' | 'edit', row?: any) => {
   }
 }
 
-// 3. 提交表单
 const handleSubmit = async () => {
   if (!formRef.value) return
-  
   await formRef.value.validate(async (valid: boolean) => {
     if (valid) {
-      // 校验经纬度
       if (!formData.lat || !formData.lng) {
         ElMessage.warning('请在地图上点击选择商户位置')
         return
       }
-
       submitLoading.value = true
       try {
         if (dialogType.value === 'add') {
@@ -149,11 +115,8 @@ const handleSubmit = async () => {
   })
 }
 
-// 4. 删除
 const handleDelete = (row: any) => {
-  ElMessageBox.confirm('确定要删除该商户吗？', '提示', {
-    type: 'warning'
-  }).then(async () => {
+  ElMessageBox.confirm('确定要删除该商户吗？', '提示', { type: 'warning' }).then(async () => {
     await deleteMerchantAPI(row.id)
     ElMessage.success('删除成功')
     getList()
@@ -165,14 +128,8 @@ const handleCurrentChange = (val: number) => {
   getList()
 }
 
-// 格式化项目名称
-const formatProjectName = (projectId: number) => {
-  const project = projectOptions.value.find(p => p.id === projectId)
-  return project ? project.name : projectId
-}
-
 onMounted(() => {
-  initData()
+  getList()
 })
 </script>
 
@@ -186,11 +143,6 @@ onMounted(() => {
         <el-form-item label="类别">
           <el-select v-model="queryParams.category" placeholder="全部" clearable style="width: 140px">
             <el-option v-for="item in categoryOptions" :key="item" :label="item" :value="item" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="关联项目">
-          <el-select v-model="queryParams.projectId" placeholder="全部" clearable style="width: 140px">
-            <el-option v-for="item in projectOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -213,21 +165,12 @@ onMounted(() => {
             <el-tag type="info">{{ row.category }}</el-tag>
           </template>
         </el-table-column>
-        
-        <el-table-column label="关联非遗项目" width="150" align="center">
-          <template #default="{ row }">
-            <el-tag effect="plain">{{ formatProjectName(row.projectId) }}</el-tag>
-          </template>
-        </el-table-column>
-
         <el-table-column prop="rating" label="评分" width="80" align="center">
           <template #default="{ row }">
              <span style="color: #ff9900; font-weight: bold;">{{ row.rating }}</span>
           </template>
         </el-table-column>
-
         <el-table-column prop="address" label="地址" show-overflow-tooltip />
-
         <el-table-column label="操作" width="180" fixed="right" align="center">
           <template #default="{ row }">
             <el-button link type="primary" :icon="Edit" @click="openDialog('edit', row)">编辑</el-button>
@@ -247,12 +190,7 @@ onMounted(() => {
       </div>
     </el-card>
 
-    <el-dialog 
-      v-model="dialogVisible" 
-      :title="dialogType === 'add' ? '新增商户' : '编辑商户'" 
-      width="700px"
-      top="5vh"
-    >
+    <el-dialog v-model="dialogVisible" :title="dialogType === 'add' ? '新增商户' : '编辑商户'" width="700px" top="5vh">
       <el-form ref="formRef" :model="formData" :rules="rules" label-width="100px">
         <el-row :gutter="20">
           <el-col :span="12">
@@ -276,12 +214,7 @@ onMounted(() => {
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="关联项目" prop="projectId">
-              <el-select v-model="formData.projectId" style="width: 100%">
-                <el-option v-for="item in projectOptions" :key="item.id" :label="item.name" :value="item.id" />
-              </el-select>
-            </el-form-item>
-          </el-col>
+             </el-col>
         </el-row>
         
         <el-row :gutter="20">
@@ -309,7 +242,6 @@ onMounted(() => {
           />
         </el-form-item>
       </el-form>
-
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="submitLoading" @click="handleSubmit">保存</el-button>

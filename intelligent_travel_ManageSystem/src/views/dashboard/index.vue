@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
-import { getDashboardStatsAPI } from '@/api/statistics'
+import { 
+  getOverviewAPI, 
+  getTrafficTrendAPI, 
+  getHotProjectsAPI, 
+  getInterestDistributionAPI 
+} from '@/api/statistics'
 import { 
   User, 
   ChatLineRound, 
@@ -9,31 +14,24 @@ import {
   View 
 } from '@element-plus/icons-vue'
 
-// === 数据定义 ===
 const loading = ref(false)
 const statsData = ref({
-  overview: {
-    totalUsers: 0,
-    activeUsersToday: 0,
-    totalConversations: 0,
-    totalRecommendations: 0
-  }
+  totalUsers: 0,
+  dau: 0,
+  totalConversations: 0,
+  totalMessages: 0 // 注意：文档中overview返回的是 totalMessages 而不是 totalRecommendations
 })
 
-// 图表 DOM 引用
 const lineChartRef = ref<HTMLElement>()
 const barChartRef = ref<HTMLElement>()
 const pieChartRef = ref<HTMLElement>()
 
-// 图表实例
 let lineChart: echarts.ECharts | null = null
 let barChart: echarts.ECharts | null = null
 let pieChart: echarts.ECharts | null = null
 
-// === 方法 ===
-
-// 1. 初始化折线图 (流量趋势)
-const initLineChart = (data: any) => {
+// 初始化折线图
+const initLineChart = (data: any[]) => {
   if (!lineChartRef.value) return
   lineChart = echarts.init(lineChartRef.value)
   
@@ -42,14 +40,14 @@ const initLineChart = (data: any) => {
     tooltip: { trigger: 'axis' },
     legend: { data: ['浏览量(PV)', '访客数(UV)'], bottom: 0 },
     grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: data.dates },
+    xAxis: { type: 'category', boundaryGap: false, data: data.map(i => i.date) },
     yAxis: { type: 'value' },
     series: [
       {
         name: '浏览量(PV)',
         type: 'line',
         smooth: true,
-        data: data.pv,
+        data: data.map(i => i.pv),
         itemStyle: { color: '#409EFF' },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
@@ -62,7 +60,7 @@ const initLineChart = (data: any) => {
         name: '访客数(UV)',
         type: 'line',
         smooth: true,
-        data: data.uv,
+        data: data.map(i => i.uv),
         itemStyle: { color: '#67C23A' }
       }
     ]
@@ -70,7 +68,7 @@ const initLineChart = (data: any) => {
   lineChart.setOption(option)
 }
 
-// 2. 初始化柱状图 (热门项目)
+// 初始化柱状图
 const initBarChart = (data: any[]) => {
   if (!barChartRef.value) return
   barChart = echarts.init(barChartRef.value)
@@ -83,9 +81,9 @@ const initBarChart = (data: any[]) => {
     yAxis: { type: 'value' },
     series: [
       {
-        name: '咨询/浏览次数',
+        name: '咨询次数',
         type: 'bar',
-        data: data.map(i => i.count),
+        data: data.map(i => i.visitCount),
         itemStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: '#83bff6' },
@@ -100,7 +98,7 @@ const initBarChart = (data: any[]) => {
   barChart.setOption(option)
 }
 
-// 3. 初始化饼图 (兴趣分布)
+// 初始化饼图
 const initPieChart = (data: any[]) => {
   if (!pieChartRef.value) return
   pieChart = echarts.init(pieChartRef.value)
@@ -114,7 +112,7 @@ const initPieChart = (data: any[]) => {
         name: '兴趣占比',
         type: 'pie',
         radius: '50%',
-        data: data,
+        data: data.map(i => ({ value: i.count, name: i.category })),
         emphasis: {
           itemStyle: {
             shadowBlur: 10,
@@ -128,21 +126,23 @@ const initPieChart = (data: any[]) => {
   pieChart.setOption(option)
 }
 
-// 4. 获取数据并渲染
 const fetchData = async () => {
   loading.value = true
   try {
-    const res = await getDashboardStatsAPI()
-    const { overview, trafficTrend, topProjects, interestDistribution } = res.data
+    // 并行请求所有接口
+    const [overviewRes, trafficRes, hotRes, interestRes] = await Promise.all([
+      getOverviewAPI(),
+      getTrafficTrendAPI(),
+      getHotProjectsAPI(),
+      getInterestDistributionAPI()
+    ])
+
+    statsData.value = overviewRes.data
     
-    // 更新顶部卡片数字
-    statsData.value.overview = overview
-    
-    // 渲染图表 (需在 DOM 更新后)
     await nextTick()
-    initLineChart(trafficTrend)
-    initBarChart(topProjects)
-    initPieChart(interestDistribution)
+    initLineChart(trafficRes.data)
+    initBarChart(hotRes.data)
+    initPieChart(interestRes.data)
   } catch (error) {
     console.error('获取统计数据失败', error)
   } finally {
@@ -150,7 +150,6 @@ const fetchData = async () => {
   }
 }
 
-// 5. 窗口缩放自适应
 const handleResize = () => {
   lineChart?.resize()
   barChart?.resize()
@@ -179,7 +178,7 @@ onUnmounted(() => {
             <span>总用户数</span>
             <el-icon class="icon-user"><User /></el-icon>
           </div>
-          <div class="card-value">{{ statsData.overview.totalUsers.toLocaleString() }}</div>
+          <div class="card-value">{{ statsData.totalUsers.toLocaleString() }}</div>
         </el-card>
       </el-col>
       <el-col :span="6">
@@ -188,7 +187,7 @@ onUnmounted(() => {
             <span>今日活跃 (DAU)</span>
             <el-icon class="icon-active"><View /></el-icon>
           </div>
-          <div class="card-value">{{ statsData.overview.activeUsersToday.toLocaleString() }}</div>
+          <div class="card-value">{{ statsData.dau.toLocaleString() }}</div>
         </el-card>
       </el-col>
       <el-col :span="6">
@@ -197,16 +196,16 @@ onUnmounted(() => {
             <span>累计对话数</span>
             <el-icon class="icon-chat"><ChatLineRound /></el-icon>
           </div>
-          <div class="card-value">{{ statsData.overview.totalConversations.toLocaleString() }}</div>
+          <div class="card-value">{{ statsData.totalConversations.toLocaleString() }}</div>
         </el-card>
       </el-col>
       <el-col :span="6">
         <el-card shadow="hover" class="data-card">
           <div class="card-header">
-            <span>智能推荐次数</span>
+            <span>累计消息数</span>
             <el-icon class="icon-rec"><Position /></el-icon>
           </div>
-          <div class="card-value">{{ statsData.overview.totalRecommendations.toLocaleString() }}</div>
+          <div class="card-value">{{ statsData.totalMessages.toLocaleString() }}</div>
         </el-card>
       </el-col>
     </el-row>
@@ -231,40 +230,14 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.dashboard-container {
-  padding: 20px;
-  background-color: #f0f2f5;
-  min-height: calc(100vh - 84px);
-}
-.card-row {
-  margin-bottom: 20px;
-}
-.data-card {
-  height: 100px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  color: #909399;
-  font-size: 14px;
-}
-.card-value {
-  font-size: 24px;
-  font-weight: bold;
-  margin-top: 10px;
-  color: #303133;
-}
-/* 图标颜色 */
+.dashboard-container { padding: 20px; background-color: #f0f2f5; min-height: calc(100vh - 84px); }
+.card-row { margin-bottom: 20px; }
+.data-card { height: 100px; display: flex; flex-direction: column; justify-content: center; }
+.card-header { display: flex; justify-content: space-between; align-items: center; color: #909399; font-size: 14px; }
+.card-value { font-size: 24px; font-weight: bold; margin-top: 10px; color: #303133; }
 .icon-user { color: #409EFF; font-size: 20px; }
 .icon-active { color: #67C23A; font-size: 20px; }
 .icon-chat { color: #E6A23C; font-size: 20px; }
 .icon-rec { color: #F56C6C; font-size: 20px; }
-
-.chart-card {
-  margin-bottom: 20px;
-}
+.chart-card { margin-bottom: 20px; }
 </style>

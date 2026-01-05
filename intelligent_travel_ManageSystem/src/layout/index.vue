@@ -51,7 +51,10 @@ const handleLogout = () => {
           text-color="#fff"
           active-text-color="#ffd04b"
         >
-          <div class="logo">非遗伴游后台</div>
+          <div class="logo">
+            <img src="/Tradition.svg" alt="" style="height:30px; vertical-align: middle; margin-right: 8px;" />
+            非遗伴游后台
+          </div>
 
           <el-menu-item index="/dashboard">
             <el-icon><Odometer /></el-icon>
