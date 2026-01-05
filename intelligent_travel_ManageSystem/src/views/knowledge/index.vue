@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { UploadInstance, UploadProps, UploadUserFile } from 'element-plus'
-import { Search, Upload, Refresh, Delete, Document } from '@element-plus/icons-vue'
+import type {  UploadProps, UploadUserFile } from 'element-plus'
+import { Search, Upload, Refresh, Document } from '@element-plus/icons-vue'
 
 // 引入 API
 import { 
@@ -43,7 +43,7 @@ const formData = reactive({
 })
 
 // 上传组件引用
-const uploadRef = ref<UploadInstance>()
+// const uploadRef = ref<UploadInstance>()
 const fileList = ref<UploadUserFile[]>([])
 
 // 表单校验规则
