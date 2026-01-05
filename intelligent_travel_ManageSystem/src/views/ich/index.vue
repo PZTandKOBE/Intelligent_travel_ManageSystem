@@ -10,14 +10,14 @@ import {
   updateICHProjectAPI, 
   deleteICHProjectAPI 
 } from '@/api/ich'
-import { getMerchantListAPI } from '@/api/merchant' // 引入商户列表
+import { getMerchantListAPI } from '@/api/merchant' 
 import { uploadFileAPI } from '@/api/file'
 import ICIMedia from '@/components/ICIMedia.vue'
 
 const loading = ref(false)
 const tableData = ref([])
 const total = ref(0)
-const merchantOptions = ref<any[]>([]) // 商户下拉数据
+const merchantOptions = ref<any[]>([]) 
 
 const queryParams = reactive({
   current: 1,
@@ -42,7 +42,7 @@ const formData = reactive({
   isIndoor: 0,
   lat: undefined as number | undefined,
   lng: undefined as number | undefined,
-  merchantIds: [] as number[] // 新增：关联的商户ID数组
+  merchantIds: [] as number[] 
 })
 
 const mediaDialogVisible = ref(false)
@@ -58,7 +58,6 @@ const rules = {
   city: [{ required: true, message: '请选择城市', trigger: 'change' }]
 }
 
-// 获取商户列表供选择
 const getMerchantOptions = async () => {
   try {
     const res = await getMerchantListAPI({ current: 1, pageSize: 1000 })
@@ -73,7 +72,7 @@ const getList = async () => {
   try {
     const res = await getICHListAPI(queryParams)
     tableData.value = res.data.records
-    total.value = res.data.total
+    total.value = typeof res.data.total === 'string' ? parseInt(res.data.total) : res.data.total
   } finally {
     loading.value = false
   }
@@ -91,7 +90,6 @@ const handleReset = () => {
 }
 
 const openDialog = async (type: 'add' | 'edit', row?: any) => {
-  // 每次打开弹窗前刷新商户列表
   await getMerchantOptions()
 
   dialogType.value = type
@@ -99,10 +97,7 @@ const openDialog = async (type: 'add' | 'edit', row?: any) => {
   
   if (type === 'edit' && row) {
     Object.assign(formData, row)
-    // 注意：编辑时，这里假设 row 中并没有返回 merchantIds
-    // 如果需要回显，可能需要额外调用接口 fetchProjectMerchants(row.id)
-    // 这里暂时置空或保持原样，取决于后端是否在 list 接口返回了 merchantIds
-    formData.merchantIds = [] 
+    formData.merchantIds = [] // 编辑暂不回显商户，需后端支持
   } else {
     formData.id = undefined
     formData.name = ''
@@ -135,7 +130,6 @@ const handleSubmit = async () => {
     if (valid) {
       submitLoading.value = true
       try {
-        // 构建提交数据，转换 merchantIds 数组为字符串
         const payload = {
           ...formData,
           merchantIds: formData.merchantIds.join(',') 
@@ -177,6 +171,11 @@ const openMediaDialog = (row: any) => {
 
 const handleCurrentChange = (val: number) => {
   queryParams.current = val
+  getList()
+}
+const handleSizeChange = (val: number) => {
+  queryParams.pageSize = val
+  queryParams.current = 1
   getList()
 }
 
@@ -263,8 +262,10 @@ onMounted(() => {
           v-model:current-page="queryParams.current"
           v-model:page-size="queryParams.pageSize"
           :total="total"
-          layout="total, prev, pager, next"
+          :page-sizes="[10, 20, 50]"
+          layout="total, sizes, prev, pager, next, jumper"
           @current-change="handleCurrentChange"
+          @size-change="handleSizeChange"
         />
       </div>
     </el-card>
@@ -306,7 +307,7 @@ onMounted(() => {
         </el-form-item>
 
         <el-row :gutter="20">
-          <el-col :span="12">
+          <el-col :span="14">
             <el-form-item label="类别" prop="category">
               <el-select v-model="formData.category" style="width: 100%">
                 <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
@@ -346,14 +347,68 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.app-container { padding: 20px; background: #f0f2f5; min-height: calc(100vh - 84px); }
-.search-card { margin-bottom: 20px; }
-.toolbar { margin-bottom: 20px; }
-.pagination { margin-top: 20px; display: flex; justify-content: flex-end; }
-.image-slot { display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; background: #f5f7fa; color: #909399; }
-.avatar-uploader { border: 1px dashed #d9d9d9; border-radius: 6px; cursor: pointer; position: relative; overflow: hidden; width: 100px; height: 100px; display: flex; justify-content: center; align-items: center; }
-.avatar-uploader:hover { border-color: #409EFF; }
-.avatar-uploader-icon { font-size: 28px; color: #8c939d; }
-.avatar { width: 100px; height: 100px; display: block; object-fit: cover; }
-.tips { font-size: 12px; color: #999; margin-top: 5px; }
+.app-container {
+  padding: 20px;
+  background: #f0f2f5;
+  min-height: calc(100vh - 84px);
+}
+
+.search-card {
+  margin-bottom: 20px;
+}
+
+.toolbar {
+  margin-bottom: 20px;
+}
+
+.pagination {
+  margin-top: 20px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.image-slot {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  background: #f5f7fa;
+  color: #909399;
+}
+
+.avatar-uploader {
+  border: 1px dashed #d9d9d9;
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  width: 100px;
+  height: 100px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.avatar-uploader:hover {
+  border-color: #409EFF;
+}
+
+.avatar-uploader-icon {
+  font-size: 28px;
+  color: #8c939d;
+}
+
+.avatar {
+  width: 100px;
+  height: 100px;
+  display: block;
+  object-fit: cover;
+}
+
+.tips {
+  font-size: 12px;
+  color: #999;
+  margin-top: 5px;
+}
 </style>

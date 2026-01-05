@@ -8,30 +8,35 @@ import {
   updateMerchantAPI, 
   deleteMerchantAPI 
 } from '@/api/merchant'
+import { getICHListAPI } from '@/api/ich' // 引入项目API用于搜索下拉
 import MapPicker from '@/components/MapPicker/index.vue'
 
+// === 数据定义 ===
 const loading = ref(false)
 const tableData = ref([])
 const total = ref(0)
+const projectOptions = ref<any[]>([]) // 仅用于搜索栏的下拉
 
+// 查询参数
 const queryParams = reactive({
   current: 1,
   pageSize: 10,
   name: '',
-  category: ''
-  // 移除 projectId 查询，因为现在关联逻辑变了
+  category: '',
+  projectId: undefined as number | undefined // 搜索时仍保留此字段
 })
 
+// 表单控制
 const dialogVisible = ref(false)
 const dialogType = ref<'add' | 'edit'>('add')
 const submitLoading = ref(false)
 const formRef = ref()
 
+// 表单数据 (新增/编辑时不包含 projectId)
 const formData = reactive({
   id: undefined as number | undefined,
   name: '',
   category: '',
-  // projectId: undefined, // 移除关联项目
   address: '',
   phone: '',
   lat: undefined as number | undefined,
@@ -48,12 +53,25 @@ const rules = {
   address: [{ required: true, message: '请输入详细地址', trigger: 'blur' }]
 }
 
+// === 方法实现 ===
+
+// 获取项目列表（仅用于搜索栏筛选）
+const getProjectList = async () => {
+  try {
+    // 获取全部项目供下拉
+    const res = await getICHListAPI({ current: 1, pageSize: 100 })
+    projectOptions.value = res.data.records
+  } catch (error) {
+    console.error(error)
+  }
+}
+
 const getList = async () => {
   loading.value = true
   try {
     const res = await getMerchantListAPI(queryParams)
     tableData.value = res.data.records
-    total.value = res.data.total
+    total.value = typeof res.data.total === 'string' ? parseInt(res.data.total) : res.data.total
   } finally {
     loading.value = false
   }
@@ -67,6 +85,7 @@ const handleSearch = () => {
 const handleReset = () => {
   queryParams.name = ''
   queryParams.category = ''
+  queryParams.projectId = undefined
   handleSearch()
 }
 
@@ -77,6 +96,7 @@ const openDialog = (type: 'add' | 'edit', row?: any) => {
   if (type === 'edit' && row) {
     Object.assign(formData, row)
   } else {
+    // 重置表单
     formData.id = undefined
     formData.name = ''
     formData.category = ''
@@ -127,8 +147,20 @@ const handleCurrentChange = (val: number) => {
   queryParams.current = val
   getList()
 }
+const handleSizeChange = (val: number) => {
+  queryParams.pageSize = val
+  queryParams.current = 1 // 切换页大小时重置到第一页
+  getList()
+}
+
+// 辅助显示项目名称
+const getProjectName = (id: number) => {
+  const p = projectOptions.value.find(item => item.id === id)
+  return p ? p.name : id
+}
 
 onMounted(() => {
+  getProjectList()
   getList()
 })
 </script>
@@ -143,6 +175,11 @@ onMounted(() => {
         <el-form-item label="类别">
           <el-select v-model="queryParams.category" placeholder="全部" clearable style="width: 140px">
             <el-option v-for="item in categoryOptions" :key="item" :label="item" :value="item" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="关联项目">
+          <el-select v-model="queryParams.projectId" placeholder="全部" clearable style="width: 140px">
+            <el-option v-for="item in projectOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -165,12 +202,22 @@ onMounted(() => {
             <el-tag type="info">{{ row.category }}</el-tag>
           </template>
         </el-table-column>
+        
+        <el-table-column label="关联项目" width="150" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.projectId" effect="plain">{{ getProjectName(row.projectId) }}</el-tag>
+            <span v-else style="color:#999; font-size:12px">暂无</span>
+          </template>
+        </el-table-column>
+
         <el-table-column prop="rating" label="评分" width="80" align="center">
           <template #default="{ row }">
              <span style="color: #ff9900; font-weight: bold;">{{ row.rating }}</span>
           </template>
         </el-table-column>
+
         <el-table-column prop="address" label="地址" show-overflow-tooltip />
+
         <el-table-column label="操作" width="180" fixed="right" align="center">
           <template #default="{ row }">
             <el-button link type="primary" :icon="Edit" @click="openDialog('edit', row)">编辑</el-button>
@@ -184,8 +231,10 @@ onMounted(() => {
           v-model:current-page="queryParams.current"
           v-model:page-size="queryParams.pageSize"
           :total="total"
-          layout="total, prev, pager, next"
+          :page-sizes="[10, 20, 50]"
+          layout="total, sizes, prev, pager, next, jumper"
           @current-change="handleCurrentChange"
+          @size-change="handleSizeChange"
         />
       </div>
     </el-card>
@@ -213,9 +262,7 @@ onMounted(() => {
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="12">
-             </el-col>
-        </el-row>
+          </el-row>
         
         <el-row :gutter="20">
           <el-col :span="12">

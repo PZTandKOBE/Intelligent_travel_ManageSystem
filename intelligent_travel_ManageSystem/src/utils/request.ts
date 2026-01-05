@@ -2,12 +2,13 @@ import axios from 'axios'
 import type { AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 
-// 递归清洗对象中的空值 (undefined, null, '')
+// === 核心修复：参数清洗函数 ===
+// 递归移除对象中的 undefined, null, 和空字符串
 const cleanParams = (data: any): any => {
   if (data === null || typeof data !== 'object') {
     return data
   }
-  // 如果是 FormData，不做处理
+  // 如果是 FormData，不做处理，直接返回
   if (data instanceof FormData) {
     return data
   }
@@ -40,12 +41,13 @@ const service: AxiosInstance = axios.create({
 // 请求拦截器
 service.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    // 自动清洗 data 和 params 中的空值，防止后端查询失败
-    if (config.data && typeof config.data === 'object') {
-      config.data = cleanParams(config.data)
-    }
+    // === 核心修复：自动清洗参数 ===
+    // 无论是 params (GET) 还是 data (POST)，都进行清洗
     if (config.params && typeof config.params === 'object') {
       config.params = cleanParams(config.params)
+    }
+    if (config.data && typeof config.data === 'object') {
+      config.data = cleanParams(config.data)
     }
     return config
   },
@@ -73,6 +75,7 @@ service.interceptors.response.use(
         window.location.href = '/login'
         return Promise.reject(new Error('Unauthorized'))
       }
+
       // 403: 无权限
       if (res.code === 40300 || res.code === 403) {
         ElMessage.error('您没有权限执行此操作')
@@ -87,11 +90,14 @@ service.interceptors.response.use(
     console.error('Request Err:', error)
     let msg = '请求超时或服务器异常'
     if (error.response) {
-      if (error.response.status === 401) {
+      const status = error.response.status
+      if (status === 401) {
         window.location.href = '/login'
+        return Promise.reject(error)
       }
-      if (error.response.status === 404) msg = '接口不存在 (404)'
-      if (error.response.status === 500) msg = '服务器内部错误 (500)'
+      if (status === 403) msg = '无权访问'
+      if (status === 404) msg = '请求资源不存在'
+      if (status === 500) msg = '服务器内部错误'
     }
     ElMessage.error(msg)
     return Promise.reject(error)

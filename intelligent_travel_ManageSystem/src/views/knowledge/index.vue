@@ -3,6 +3,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadProps, UploadUserFile } from 'element-plus'
 import { Search, Upload, Refresh, Document } from '@element-plus/icons-vue'
+
 import { 
   getKnowledgeListAPI, 
   uploadKnowledgeAPI, 
@@ -28,17 +29,25 @@ const dialogVisible = ref(false)
 const dialogType = ref<'add' | 'edit'>('add')
 const submitLoading = ref(false)
 const formRef = ref()
+
 const formData = reactive({
   id: undefined as number | undefined,
   title: '',
   projectId: undefined as number | undefined,
   file: null as File | null
 })
+
 const fileList = ref<UploadUserFile[]>([])
 
 const rules = {
   title: [{ required: true, message: '请输入文档标题', trigger: 'blur' }],
   projectId: [{ required: true, message: '请选择关联非遗项目', trigger: 'change' }]
+}
+
+// 辅助方法：获取项目名称
+const getProjectName = (projectId: number) => {
+  const project = projectOptions.value.find(p => p.id === projectId)
+  return project ? project.name : null
 }
 
 const getProjectList = async () => {
@@ -55,7 +64,7 @@ const getList = async () => {
   try {
     const res = await getKnowledgeListAPI(queryParams)
     tableData.value = res.data.records
-    total.value = res.data.total
+    total.value = typeof res.data.total === 'string' ? parseInt(res.data.total) : res.data.total
   } finally {
     loading.value = false
   }
@@ -158,6 +167,11 @@ const handleCurrentChange = (val: number) => {
   queryParams.current = val
   getList()
 }
+const handleSizeChange = (val: number) => {
+  queryParams.pageSize = val
+  queryParams.current = 1
+  getList()
+}
 
 const getStatusTag = (status: string) => {
   const map: Record<string, { type: string, label: string }> = {
@@ -215,11 +229,16 @@ onMounted(() => {
             <div style="font-size: 12px; color: #999; margin-left: 24px;">文件名: {{ row.fileUrl ? row.fileUrl.split('/').pop() : '未知' }}</div>
           </template>
         </el-table-column>
+        
         <el-table-column label="关联项目" width="150" align="center">
           <template #default="{ row }">
-            <el-tag effect="plain">{{ projectOptions.find(p => p.id === row.projectId)?.name || row.projectId }}</el-tag>
+            <el-tag v-if="row.projectId && getProjectName(row.projectId)" effect="plain">
+              {{ getProjectName(row.projectId) }}
+            </el-tag>
+            <span v-else style="color: #999; font-size: 12px;">暂无</span>
           </template>
         </el-table-column>
+
         <el-table-column label="切片状态" width="120" align="center">
           <template #default="{ row }">
             <el-tag :type="getStatusTag(row.status).type as any">{{ getStatusTag(row.status).label }}</el-tag>
@@ -244,7 +263,7 @@ onMounted(() => {
           :page-sizes="[10, 20, 50]"
           layout="total, sizes, prev, pager, next, jumper"
           @current-change="handleCurrentChange"
-          @size-change="handleSearch"
+          @size-change="handleSizeChange"
         />
       </div>
     </el-card>
@@ -255,8 +274,13 @@ onMounted(() => {
           <el-input v-model="formData.title" placeholder="请输入文档展示标题" />
         </el-form-item>
         <el-form-item label="关联项目" prop="projectId">
-          <el-select v-model="formData.projectId" placeholder="请选择关联非遗项目" style="width: 100%">
-            <el-option v-for="item in projectOptions" :key="item.id" :label="item.name" :value="item.id" />
+          <el-select v-model="formData.projectId" placeholder="请选择关联非遗项目" style="width: 100%" clearable>
+            <el-option
+              v-for="item in projectOptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="文档文件" :required="dialogType === 'add'">
@@ -285,6 +309,6 @@ onMounted(() => {
 
 <style scoped>
 .app-container { padding: 20px; background-color: #f0f2f5; min-height: calc(100vh - 84px); }
-.search-card, .toolbar { margin-bottom: 20px; }
+.search-card, .table-card, .toolbar { margin-bottom: 20px; }
 .pagination { margin-top: 20px; display: flex; justify-content: flex-end; }
 </style>
