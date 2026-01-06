@@ -8,14 +8,27 @@ import {
   updateMerchantAPI, 
   deleteMerchantAPI 
 } from '@/api/merchant'
-import { getICHListAPI } from '@/api/ich' // 引入项目API用于搜索下拉
+import { getICHListAPI } from '@/api/ich' 
 import MapPicker from '@/components/MapPicker/index.vue'
+import AMapLoader from '@amap/amap-jsapi-loader'
+
+// === ⚠️⚠️⚠️ 高德地图配置 ⚠️⚠️⚠️ ===
+// 务必确保这里和 MapPicker/index.vue 里的 Key 完全一致！
+const AMAP_KEY = 'ae49d6da7c2b2e512cfd0eee52a8e84a'           
+const AMAP_SECURITY_CODE = 'b53b60a2ff86751a31550af6a570fc7b' 
+
+// 配置安全密钥 (JSAPI 2.0 必须)
+// @ts-ignore
+window._AMapSecurityConfig = {
+  securityJsCode: AMAP_SECURITY_CODE,
+}
 
 // === 数据定义 ===
 const loading = ref(false)
-const tableData = ref([])
+const tableData = ref<any[]>([])
 const total = ref(0)
-const projectOptions = ref<any[]>([]) // 仅用于搜索栏的下拉
+const projectOptions = ref<any[]>([]) 
+const computedAddresses = reactive<Record<number, string>>({}) // 缓存计算出的地址
 
 // 查询参数
 const queryParams = reactive({
@@ -23,7 +36,7 @@ const queryParams = reactive({
   pageSize: 10,
   name: '',
   category: '',
-  projectId: undefined as number | undefined // 搜索时仍保留此字段
+  projectId: undefined as number | undefined
 })
 
 // 表单控制
@@ -32,7 +45,7 @@ const dialogType = ref<'add' | 'edit'>('add')
 const submitLoading = ref(false)
 const formRef = ref()
 
-// 表单数据 (新增/编辑时不包含 projectId)
+// 表单数据 (已删除 images 字段)
 const formData = reactive({
   id: undefined as number | undefined,
   name: '',
@@ -49,16 +62,59 @@ const categoryOptions = ['体验馆', '文创店', '老字号', '博物馆', '�
 
 const rules = {
   name: [{ required: true, message: '请输入商户名称', trigger: 'blur' }],
-  category: [{ required: true, message: '请选择商户类别', trigger: 'change' }],
-  address: [{ required: true, message: '请输入详细地址', trigger: 'blur' }]
+  category: [{ required: true, message: '请选择商户类别', trigger: 'change' }]
 }
 
-// === 方法实现 ===
+// === 地址逆编码相关 ===
+let geocoder: any = null
 
-// 获取项目列表（仅用于搜索栏筛选）
+const initGeocoder = async () => {
+  try {
+    const AMap = await AMapLoader.load({
+      key: AMAP_KEY,
+      version: '2.0',
+      plugins: ['AMap.Geocoder']
+    })
+    geocoder = new AMap.Geocoder()
+    // 初始化完成后，如果列表已有数据，立即触发一次解析
+    if (tableData.value.length > 0) {
+      tableData.value.forEach(row => resolveAddress(row))
+    }
+  } catch (e) {
+    console.error('地图加载失败', e)
+  }
+}
+
+const resolveAddress = (row: any) => {
+  // 1. 优先显示后端返回的地址 (如果有)
+  if (row.address) return row.address
+  // 2. 如果已计算过，直接返回缓存
+  if (computedAddresses[row.id]) return computedAddresses[row.id]
+  
+  // 3. 逆地理编码
+  if (row.lat && row.lng) {
+    if (!computedAddresses[row.id]) {
+       computedAddresses[row.id] = '地址加载中...'
+    }
+
+    if (geocoder) {
+      geocoder.getAddress([row.lng, row.lat], (status: string, result: any) => {
+        if (status === 'complete' && result.regeocode) {
+          computedAddresses[row.id] = result.regeocode.formattedAddress
+        } else {
+          computedAddresses[row.id] = '地址解析失败'
+        }
+      })
+      return computedAddresses[row.id]
+    }
+  }
+  return '暂无坐标'
+}
+
+// === 业务方法 ===
+
 const getProjectList = async () => {
   try {
-    // 获取全部项目供下拉
     const res = await getICHListAPI({ current: 1, pageSize: 100 })
     projectOptions.value = res.data.records
   } catch (error) {
@@ -72,6 +128,11 @@ const getList = async () => {
     const res = await getMerchantListAPI(queryParams)
     tableData.value = res.data.records
     total.value = typeof res.data.total === 'string' ? parseInt(res.data.total) : res.data.total
+    
+    // 如果地图服务已就绪，立即解析地址
+    if (geocoder) {
+      tableData.value.forEach(row => resolveAddress(row))
+    }
   } finally {
     loading.value = false
   }
@@ -94,9 +155,9 @@ const openDialog = (type: 'add' | 'edit', row?: any) => {
   dialogVisible.value = true
   
   if (type === 'edit' && row) {
+    // 复制数据，排除可能的 null 值干扰
     Object.assign(formData, row)
   } else {
-    // 重置表单
     formData.id = undefined
     formData.name = ''
     formData.category = ''
@@ -117,6 +178,7 @@ const handleSubmit = async () => {
         ElMessage.warning('请在地图上点击选择商户位置')
         return
       }
+      
       submitLoading.value = true
       try {
         if (dialogType.value === 'add') {
@@ -149,11 +211,10 @@ const handleCurrentChange = (val: number) => {
 }
 const handleSizeChange = (val: number) => {
   queryParams.pageSize = val
-  queryParams.current = 1 // 切换页大小时重置到第一页
+  queryParams.current = 1 
   getList()
 }
 
-// 辅助显示项目名称
 const getProjectName = (id: number) => {
   const p = projectOptions.value.find(item => item.id === id)
   return p ? p.name : id
@@ -161,6 +222,7 @@ const getProjectName = (id: number) => {
 
 onMounted(() => {
   getProjectList()
+  initGeocoder()
   getList()
 })
 </script>
@@ -196,6 +258,7 @@ onMounted(() => {
 
       <el-table v-loading="loading" :data="tableData" border stripe>
         <el-table-column prop="id" label="ID" width="80" align="center" />
+        
         <el-table-column prop="name" label="商户名称" min-width="150" />
         <el-table-column prop="category" label="类别" width="100" align="center">
           <template #default="{ row }">
@@ -216,7 +279,11 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column prop="address" label="地址" show-overflow-tooltip />
+        <el-table-column label="地址" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ computedAddresses[row.id] || row.address || '暂无' }}
+          </template>
+        </el-table-column>
 
         <el-table-column label="操作" width="180" fixed="right" align="center">
           <template #default="{ row }">
@@ -262,7 +329,7 @@ onMounted(() => {
               </el-select>
             </el-form-item>
           </el-col>
-          </el-row>
+        </el-row>
         
         <el-row :gutter="20">
           <el-col :span="12">

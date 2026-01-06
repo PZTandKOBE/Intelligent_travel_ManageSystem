@@ -1,12 +1,11 @@
-// src/api/ich.ts
 import request from '@/utils/request'
 
 // === 非遗项目管理 ===
 
-// 分页查询非遗项目
+// 分页查询非遗项目 (已修正为 listWithMedia)
 export const getICHListAPI = (data: any) => {
   return request({
-    url: '/ich/project/list',
+    url: '/ich/project/listWithMedia',
     method: 'POST',
     data
   })
@@ -38,7 +37,7 @@ export const deleteICHProjectAPI = (id: number) => {
   })
 }
 
-// === 非遗媒体管理 (新增部分) ===
+// === 非遗媒体管理 ===
 
 // 获取项目关联的媒体列表
 export const getICHMediaListAPI = (projectId: number) => {

@@ -1,4 +1,3 @@
-// src/api/merchant.ts
 import request from '@/utils/request'
 
 // 分页查询商户
@@ -7,6 +6,14 @@ export const getMerchantListAPI = (data: any) => {
     url: '/merchant/list',
     method: 'POST',
     data
+  })
+}
+
+// 根据非遗项目ID查询关联商户 (新增，用于编辑回显)
+export const getMerchantsByProjectAPI = (projectId: number) => {
+  return request({
+    url: `/merchant/project/${projectId}`,
+    method: 'GET'
   })
 }
 

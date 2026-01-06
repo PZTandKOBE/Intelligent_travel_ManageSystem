@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import AMapLoader from '@amap/amap-jsapi-loader' 
 
 // props 接收初始坐标
 const props = defineProps<{
   lat?: number
   lng?: number
-  searchAddress?: string // 用于初始搜索的地址
+  searchAddress?: string
 }>()
 
 const emit = defineEmits(['update:lat', 'update:lng', 'select'])
@@ -15,38 +16,26 @@ const mapContainer = ref<HTMLElement | null>(null)
 let map: any = null
 let marker: any = null
 
-// 高德地图配置 (请替换为你自己的 Key)
-const AMAP_KEY = '231e20c40715a74a88291615f7c0576f' 
-// 如果使用 JS API 2.0 且没有配置代理，可能需要安全密钥，生产环境建议配置 Nginx 代理
-const SECURITY_CODE = '231e20c40715a74a88291615f7c0576f' 
-
-// 动态加载高德地图脚本
-const loadMapScript = () => {
-  return new Promise((resolve, reject) => {
-    if ((window as any).AMap) {
-      resolve((window as any).AMap)
-      return
-    }
-    
-    // 设置安全密钥 (JSAPI 2.0 必须)
-    ;(window as any)._AMapSecurityConfig = {
-      securityJsCode: SECURITY_CODE,
-    }
-
-    const script = document.createElement('script')
-    script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`
-    script.onload = () => resolve((window as any).AMap)
-    script.onerror = reject
-    document.head.appendChild(script)
-  })
-}
+// === ⚠️⚠️⚠️ 保持与 Merchant/Index 一致 ⚠️⚠️⚠️ ===
+const AMAP_KEY = 'ae49d6da7c2b2e512cfd0eee52a8e84a' 
+const AMAP_SECURITY_CODE = 'b53b60a2ff86751a31550af6a570fc7b'
 
 // 初始化地图
 const initMap = async () => {
   try {
-    const AMap = await loadMapScript() as any
+    // 1. 配置安全密钥
+    ;(window as any)._AMapSecurityConfig = {
+      securityJsCode: AMAP_SECURITY_CODE,
+    }
+
+    // 2. 加载地图 (统一使用 AMapLoader，避免重复加载冲突)
+    const AMap = await AMapLoader.load({
+      key: AMAP_KEY,
+      version: '2.0',
+      plugins: ['AMap.Marker', 'AMap.Geocoder'] 
+    })
     
-    // 默认中心点：广州 (如果没有传入坐标)
+    // 3. 渲染地图
     const center = (props.lng && props.lat) ? [props.lng, props.lat] : [113.2644, 23.1291]
     
     map = new AMap.Map(mapContainer.value, {
@@ -54,15 +43,15 @@ const initMap = async () => {
       center: center,
     })
 
-    // 如果有初始坐标，添加标记
+    // 4. 如果有初始坐标，添加标记
     if (props.lng && props.lat) {
-      addMarker(props.lng, props.lat)
+      addMarker(AMap, props.lng, props.lat)
     }
 
-    // 地图点击事件
+    // 5. 地图点击事件
     map.on('click', (e: any) => {
       const { lng, lat } = e.lnglat
-      addMarker(lng, lat)
+      addMarker(AMap, lng, lat)
       emit('update:lng', lng)
       emit('update:lat', lat)
       emit('select', { lng, lat })
@@ -71,13 +60,12 @@ const initMap = async () => {
 
   } catch (error) {
     console.error('地图加载失败', error)
-    ElMessage.error('地图加载失败，请检查 Key 配置')
+    ElMessage.error('地图加载失败，请检查 Key')
   }
 }
 
 // 添加/移动标记
-const addMarker = (lng: number, lat: number) => {
-  const AMap = (window as any).AMap
+const addMarker = (AMap: any, lng: number, lat: number) => {
   if (!marker) {
     marker = new AMap.Marker({
       position: [lng, lat],
@@ -88,12 +76,12 @@ const addMarker = (lng: number, lat: number) => {
   }
 }
 
-// 监听 props 变化更新视图 (例如编辑模式打开时)
+// 监听 props 变化
 watch(() => [props.lng, props.lat], ([newLng, newLat]) => {
   if (newLng && newLat && map) {
     const AMap = (window as any).AMap
     if(AMap) {
-       addMarker(newLng as number, newLat as number)
+       addMarker(AMap, newLng as number, newLat as number)
        map.setCenter([newLng, newLat])
     }
   }

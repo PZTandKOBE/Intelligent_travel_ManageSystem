@@ -173,14 +173,15 @@ const handleSizeChange = (val: number) => {
   getList()
 }
 
-const getStatusTag = (status: string) => {
-  const map: Record<string, { type: string, label: string }> = {
-    'completed': { type: 'success', label: '已完成' },
-    'processing': { type: 'warning', label: '处理中' },
-    'failed': { type: 'danger', label: '失败' },
-    'pending': { type: 'info', label: '等待中' }
+// 修复：状态码映射改为数字 (0-待处理 1-处理中 2-已完成 3-失败)
+const getStatusTag = (status: number) => {
+  const map: Record<number, { type: string, label: string }> = {
+    2: { type: 'success', label: '已完成' },
+    1: { type: 'warning', label: '处理中' },
+    3: { type: 'danger', label: '失败' },
+    0: { type: 'info', label: '待处理' }
   }
-  return map[status] || { type: 'info', label: status || '未知' }
+  return map[status] || { type: 'info', label: '未知' }
 }
 
 onMounted(() => {
@@ -241,7 +242,7 @@ onMounted(() => {
 
         <el-table-column label="切片状态" width="120" align="center">
           <template #default="{ row }">
-            <el-tag :type="getStatusTag(row.status).type as any">{{ getStatusTag(row.status).label }}</el-tag>
+            <el-tag :type="getStatusTag(row.vectorStatus).type as any">{{ getStatusTag(row.vectorStatus).label }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="chunkCount" label="切片数" width="100" align="center" />
