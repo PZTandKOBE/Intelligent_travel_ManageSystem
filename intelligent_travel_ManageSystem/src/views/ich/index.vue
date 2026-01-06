@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-// 1. 导入缺少的类型 UploadRequestOptions, UploadRawFile
-import type { UploadUserFile, UploadProps, UploadRequestOptions, UploadRawFile } from 'element-plus'
+import type { UploadUserFile, UploadProps, UploadRawFile, UploadFile, UploadFiles } from 'element-plus'
 import { Search, Plus, Edit, Delete, Picture as IconPicture } from '@element-plus/icons-vue'
 
 import { 
@@ -12,11 +11,9 @@ import {
   deleteICHProjectAPI 
 } from '@/api/ich'
 import { getMerchantListAPI, getMerchantsByProjectAPI } from '@/api/merchant' 
-// import { uploadFileAPI } from '@/api/file'
 import AMapLoader from '@amap/amap-jsapi-loader' 
 
 // === ⚠️⚠️⚠️ 高德地图配置 ⚠️⚠️⚠️ ===
-// 务必与 MapPicker 保持一致的 Web端(JSAPI) Key
 const AMAP_KEY = 'ae49d6da7c2b2e512cfd0eee52a8e84a' 
 const AMAP_SECURITY_CODE = 'b53b60a2ff86751a31550af6a570fc7b'
 
@@ -59,11 +56,14 @@ const formData = reactive({
 const coverFile = ref<File | null>(null)
 
 // === 资源管理 (图片) ===
+// 定义扩展类型，包含可选的 id 属性
+type ExtendedUploadFile = UploadUserFile & { id?: number }
+
 const mediaDialogVisible = ref(false)
 const mediaSubmitLoading = ref(false)
-const currentProjectId = ref<number | undefined>(undefined)
-const currentProjectName = ref('')
-const mediaFileList = ref<UploadUserFile[]>([])
+const currentProjectFullInfo = ref<any>({}) 
+// 使用扩展类型
+const mediaFileList = ref<ExtendedUploadFile[]>([])
 const pendingDeleteIds = ref<string[]>([])
 
 const categoryOptions = ['传统美术', '传统技艺', '传统戏剧', '传统舞蹈', '民俗']
@@ -80,7 +80,6 @@ let geocoder: any = null
 
 const initGeocoder = async () => {
   try {
-    // 设置安全密钥
     (window as any)._AMapSecurityConfig = {
       securityJsCode: AMAP_SECURITY_CODE,
     }
@@ -92,7 +91,6 @@ const initGeocoder = async () => {
     })
     geocoder = new AMap.Geocoder()
     
-    // 初始化完成后，如果列表已有数据，立即触发一次解析
     if (tableData.value.length > 0) {
       tableData.value.forEach(row => resolveAddress(row))
     }
@@ -104,9 +102,7 @@ const initGeocoder = async () => {
 const resolveAddress = (row: any) => {
   if (computedAddresses[row.id]) return computedAddresses[row.id]
   if (row.lat && row.lng && geocoder) {
-    // 占位
     if (!computedAddresses[row.id]) computedAddresses[row.id] = '定位中...'
-    
     geocoder.getAddress([row.lng, row.lat], (status: string, result: any) => {
       if (status === 'complete' && result.regeocode) {
         computedAddresses[row.id] = result.regeocode.formattedAddress
@@ -137,9 +133,7 @@ const getList = async () => {
     tableData.value = res.data.records
     total.value = typeof res.data.total === 'string' ? parseInt(res.data.total) : res.data.total
     
-    // 如果 geocoder 还没初始化，尝试初始化
     if (!geocoder) await initGeocoder()
-    // 延迟解析，确保 geocoder 实例存在
     setTimeout(() => {
       if (geocoder) tableData.value.forEach(row => resolveAddress(row))
     }, 500)
@@ -168,6 +162,7 @@ const handleReset = () => {
   handleSearch()
 }
 
+// 打开新增/编辑弹窗
 const openDialog = async (type: 'add' | 'edit', row?: any) => {
   await getMerchantOptions()
 
@@ -204,6 +199,7 @@ const openDialog = async (type: 'add' | 'edit', row?: any) => {
   }
 }
 
+// 封面图片变更
 const handleCoverChange: UploadProps['onChange'] = (uploadFile) => {
   if (uploadFile.raw) {
     coverFile.value = uploadFile.raw
@@ -211,7 +207,7 @@ const handleCoverChange: UploadProps['onChange'] = (uploadFile) => {
   }
 }
 
-// 提交表单 (FormData 格式)
+// 提交 新增/编辑 表单
 const handleSubmit = async () => {
   if (!formRef.value) return
   await formRef.value.validate(async (valid: boolean) => {
@@ -226,13 +222,15 @@ const handleSubmit = async () => {
         data.append('city', formData.city || '')
         data.append('openStatus', formData.openStatus || 'open')
         
-        // 强制转字符串
-        data.append('lat', formData.lat ? String(formData.lat) : '')
-        data.append('lng', formData.lng ? String(formData.lng) : '')
+        if (formData.lat !== undefined && formData.lat !== null) data.append('lat', String(formData.lat))
+        if (formData.lng !== undefined && formData.lng !== null) data.append('lng', String(formData.lng))
         data.append('isIndoor', String(formData.isIndoor)) 
         
-        const mIds = formData.merchantIds.length > 0 ? formData.merchantIds.join(',') : ''
-        data.append('merchantIds', mIds)
+        if (formData.merchantIds && formData.merchantIds.length > 0) {
+          data.append('merchantIds', formData.merchantIds.join(','))
+        } else {
+          data.append('merchantIds', '')
+        }
         
         if (coverFile.value) {
           data.append('images', coverFile.value)
@@ -269,11 +267,10 @@ const handleDelete = (row: any) => {
   })
 }
 
-// === 4. 资源管理逻辑 ===
+// === 4. 资源管理逻辑 (深度修复) ===
 
-const openMediaDialog = (row: any) => {
-  currentProjectId.value = row.id
-  currentProjectName.value = row.name
+const openMediaDialog = async (row: any) => {
+  currentProjectFullInfo.value = { ...row } 
   mediaDialogVisible.value = true
   pendingDeleteIds.value = []
   
@@ -281,66 +278,88 @@ const openMediaDialog = (row: any) => {
     mediaFileList.value = row.mediaList
       .filter((m: any) => m.mediaType === 'image')
       .map((m: any) => ({
-        name: m.id,
+        name: String(m.id),
         url: m.mediaUrl,
-        id: m.id 
+        id: m.id // 这里赋值了 id
       }))
   } else {
     mediaFileList.value = []
   }
+
+  try {
+    const merchantsRes = await getMerchantsByProjectAPI(row.id)
+    const currentMerchantIds = merchantsRes.data ? merchantsRes.data.map((m: any) => m.id) : []
+    currentProjectFullInfo.value.merchantIds = currentMerchantIds
+  } catch (e) {
+    console.error('资源管理：获取关联商户失败', e)
+    currentProjectFullInfo.value.merchantIds = []
+  }
 }
 
 const handleMediaRemove: UploadProps['onRemove'] = (uploadFile, uploadFiles) => {
-  const file = uploadFile as any
+  const file = uploadFile as any 
   if (file.id) {
     pendingDeleteIds.value.push(String(file.id))
   }
-  mediaFileList.value = uploadFiles
+  // 强制类型断言，兼容 ExtendedUploadFile
+  mediaFileList.value = uploadFiles as ExtendedUploadFile[]
 }
 
-// 修复 TS 报错的核心逻辑
-const handleMediaUpload = async (options: UploadRequestOptions) => {
-  // 类型断言：将 file 转换为 UploadRawFile，它包含 uid
-  const file = options.file as UploadRawFile
-  
-  const newFile: UploadUserFile = {
-    name: file.name,
-    uid: file.uid, // 这里的 uid 现在可以正确访问了
-    url: URL.createObjectURL(file), 
-    raw: file,
-    status: 'ready'
-  }
-  mediaFileList.value.push(newFile)
+// 【修复】标准的 onChange 处理函数，解决类型报错
+const handleFileChange: UploadProps['onChange'] = (uploadFile, uploadFiles) => {
+  // v-model 会自动同步，这里主要用于类型同步和扩展
+  mediaFileList.value = uploadFiles as ExtendedUploadFile[]
 }
 
 const handleMediaSubmit = async () => {
-  if (!currentProjectId.value) return
+  const info = currentProjectFullInfo.value
+  if (!info.id) return
+  
   mediaSubmitLoading.value = true
   try {
     const data = new FormData()
     
+    data.append('name', info.name || '')
+    data.append('category', info.category || '')
+    data.append('city', info.city || '')
+    data.append('description', info.description || '')
+    data.append('isIndoor', String(info.isIndoor === undefined ? 0 : info.isIndoor))
+    data.append('openStatus', info.openStatus || 'open')
+    if (info.lat !== undefined && info.lat !== null) data.append('lat', String(info.lat))
+    if (info.lng !== undefined && info.lng !== null) data.append('lng', String(info.lng))
+
+    if (info.merchantIds && info.merchantIds.length > 0) {
+      data.append('merchantIds', info.merchantIds.join(','))
+    } else {
+      data.append('merchantIds', '')
+    }
+
     if (pendingDeleteIds.value.length > 0) {
       data.append('deleteMediaIds', pendingDeleteIds.value.join(','))
     }
 
-    const newFiles = mediaFileList.value.filter((f: any) => !f.id && f.raw)
-    newFiles.forEach(f => {
-      data.append('images', f.raw as File)
+    // 筛选新上传的文件 (没有后端 id 且包含 raw 文件对象)
+    const newFiles = mediaFileList.value.filter((f) => !f.id && f.raw)
+    
+    newFiles.forEach((f) => {
+      data.append('images', f.raw as UploadRawFile)
     })
 
     if (pendingDeleteIds.value.length === 0 && newFiles.length === 0) {
+      ElMessage.info('未检测到图片变更')
       mediaDialogVisible.value = false
       mediaSubmitLoading.value = false
       return
     }
 
-    await updateICHProjectAPI(currentProjectId.value, data)
+    await updateICHProjectAPI(info.id, data)
+    
     ElMessage.success('资源更新成功')
     mediaDialogVisible.value = false
-    getList() 
-  } catch (error) {
+    getList()
+  } catch (error: any) {
     console.error(error)
-    ElMessage.error('更新失败')
+    ElMessage.error(error.message || '更新失败')
   } finally {
     mediaSubmitLoading.value = false
   }
@@ -532,7 +551,7 @@ onMounted(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="mediaDialogVisible" :title="`资源管理 - ${currentProjectName}`" width="700px">
+    <el-dialog v-model="mediaDialogVisible" :title="`资源管理 - ${currentProjectFullInfo.name}`" width="700px">
       <div style="margin-bottom: 10px; color: #666; font-size: 14px;">
         管理该非遗项目的图片资源。新上传的图片将在点击“保存更改”后提交。
       </div>
@@ -542,8 +561,8 @@ onMounted(() => {
         action="#"
         list-type="picture-card"
         :auto-upload="false"
-        :http-request="handleMediaUpload"
         :on-remove="handleMediaRemove"
+        :on-change="handleFileChange"
         accept="image/*"
         multiple
       >

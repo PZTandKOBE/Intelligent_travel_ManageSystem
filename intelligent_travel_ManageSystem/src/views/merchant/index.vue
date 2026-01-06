@@ -1,55 +1,53 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Edit, Delete } from '@element-plus/icons-vue'
 import { 
   getMerchantListAPI, 
   addMerchantAPI, 
   updateMerchantAPI, 
-  deleteMerchantAPI 
+  deleteMerchantAPI,
+  getTopMerchantsAPI 
 } from '@/api/merchant'
 import { getICHListAPI } from '@/api/ich' 
 import MapPicker from '@/components/MapPicker/index.vue'
 import AMapLoader from '@amap/amap-jsapi-loader'
 
-// === ⚠️⚠️⚠️ 高德地图配置 ⚠️⚠️⚠️ ===
-// 务必确保这里和 MapPicker/index.vue 里的 Key 完全一致！
+// === 高德地图配置 ===
 const AMAP_KEY = 'ae49d6da7c2b2e512cfd0eee52a8e84a'           
 const AMAP_SECURITY_CODE = 'b53b60a2ff86751a31550af6a570fc7b' 
 
-// 配置安全密钥 (JSAPI 2.0 必须)
 // @ts-ignore
-window._AMapSecurityConfig = {
-  securityJsCode: AMAP_SECURITY_CODE,
-}
+window._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE }
 
 // === 数据定义 ===
 const loading = ref(false)
-const tableData = ref<any[]>([])
+const tableData = ref<any[]>([]) // 当前页显示的数据
+const allTopData = ref<any[]>([]) // 缓存所有高分数据(用于前端分页)
 const total = ref(0)
 const projectOptions = ref<any[]>([]) 
-const computedAddresses = reactive<Record<number, string>>({}) // 缓存计算出的地址
+const computedAddresses = reactive<Record<number, string>>({}) 
 
-// 查询参数
 const queryParams = reactive({
   current: 1,
   pageSize: 10,
   name: '',
   category: '',
-  projectId: undefined as number | undefined
+  projectId: undefined as number | undefined,
+  sortType: 'default' as 'default' | 'rating' // 排序方式
 })
 
-// 表单控制
+// 表单相关
 const dialogVisible = ref(false)
 const dialogType = ref<'add' | 'edit'>('add')
 const submitLoading = ref(false)
 const formRef = ref()
 
-// 表单数据 (已删除 images 字段)
 const formData = reactive({
   id: undefined as number | undefined,
   name: '',
   category: '',
+  projectId: undefined as number | undefined,
   address: '',
   phone: '',
   lat: undefined as number | undefined,
@@ -65,7 +63,7 @@ const rules = {
   category: [{ required: true, message: '请选择商户类别', trigger: 'change' }]
 }
 
-// === 地址逆编码相关 ===
+// === 地图服务 ===
 let geocoder: any = null
 
 const initGeocoder = async () => {
@@ -76,7 +74,6 @@ const initGeocoder = async () => {
       plugins: ['AMap.Geocoder']
     })
     geocoder = new AMap.Geocoder()
-    // 初始化完成后，如果列表已有数据，立即触发一次解析
     if (tableData.value.length > 0) {
       tableData.value.forEach(row => resolveAddress(row))
     }
@@ -86,17 +83,11 @@ const initGeocoder = async () => {
 }
 
 const resolveAddress = (row: any) => {
-  // 1. 优先显示后端返回的地址 (如果有)
   if (row.address) return row.address
-  // 2. 如果已计算过，直接返回缓存
   if (computedAddresses[row.id]) return computedAddresses[row.id]
   
-  // 3. 逆地理编码
   if (row.lat && row.lng) {
-    if (!computedAddresses[row.id]) {
-       computedAddresses[row.id] = '地址加载中...'
-    }
-
+    if (!computedAddresses[row.id]) computedAddresses[row.id] = '地址加载中...'
     if (geocoder) {
       geocoder.getAddress([row.lng, row.lat], (status: string, result: any) => {
         if (status === 'complete' && result.regeocode) {
@@ -111,25 +102,44 @@ const resolveAddress = (row: any) => {
   return '暂无坐标'
 }
 
-// === 业务方法 ===
+// === 核心业务逻辑 ===
 
 const getProjectList = async () => {
   try {
-    const res = await getICHListAPI({ current: 1, pageSize: 100 })
+    const res = await getICHListAPI({ current: 1, pageSize: 1000 })
     projectOptions.value = res.data.records
   } catch (error) {
     console.error(error)
   }
 }
 
+// 获取数据入口
 const getList = async () => {
   loading.value = true
   try {
-    const res = await getMerchantListAPI(queryParams)
-    tableData.value = res.data.records
-    total.value = typeof res.data.total === 'string' ? parseInt(res.data.total) : res.data.total
+    if (queryParams.sortType === 'default') {
+      // === 模式1: 后端分页 (默认) ===
+      const res = await getMerchantListAPI({
+        current: queryParams.current,
+        pageSize: queryParams.pageSize,
+        name: queryParams.name,
+        category: queryParams.category,
+        projectId: queryParams.projectId
+      })
+      tableData.value = res.data.records
+      total.value = typeof res.data.total === 'string' ? parseInt(res.data.total) : res.data.total
+    } else {
+      // === 模式2: 评分排序 (使用 /merchant/top 接口 + 前端分页) ===
+      // 注意: 这里 limit 设为 100，模拟获取"全部"高分数据
+      const res = await getTopMerchantsAPI(100) 
+      allTopData.value = res.data || [] // 存储所有数据
+      total.value = allTopData.value.length // 设置总条数
+      
+      // 执行前端分页切割
+      updateFrontendPagination()
+    }
     
-    // 如果地图服务已就绪，立即解析地址
+    // 解析地址
     if (geocoder) {
       tableData.value.forEach(row => resolveAddress(row))
     }
@@ -138,6 +148,21 @@ const getList = async () => {
   }
 }
 
+// 前端分页切割逻辑
+const updateFrontendPagination = () => {
+  if (queryParams.sortType === 'rating') {
+    const start = (queryParams.current - 1) * queryParams.pageSize
+    const end = start + queryParams.pageSize
+    // 从缓存的全量数据中切出当前页
+    tableData.value = allTopData.value.slice(start, end)
+    
+    if (geocoder) {
+      tableData.value.forEach(row => resolveAddress(row))
+    }
+  }
+}
+
+// 搜索/重置/切页
 const handleSearch = () => {
   queryParams.current = 1
   getList()
@@ -147,20 +172,42 @@ const handleReset = () => {
   queryParams.name = ''
   queryParams.category = ''
   queryParams.projectId = undefined
+  queryParams.sortType = 'default' // 重置回默认排序
   handleSearch()
 }
 
+const handleCurrentChange = (val: number) => {
+  queryParams.current = val
+  if (queryParams.sortType === 'default') {
+    getList() // 后端分页: 重新请求
+  } else {
+    updateFrontendPagination() // 前端分页: 直接切割
+  }
+}
+
+const handleSizeChange = (val: number) => {
+  queryParams.pageSize = val
+  queryParams.current = 1 
+  if (queryParams.sortType === 'default') {
+    getList()
+  } else {
+    updateFrontendPagination()
+  }
+}
+
+// 编辑/新增逻辑
 const openDialog = (type: 'add' | 'edit', row?: any) => {
   dialogType.value = type
   dialogVisible.value = true
   
   if (type === 'edit' && row) {
-    // 复制数据，排除可能的 null 值干扰
     Object.assign(formData, row)
+    formData.projectId = row.projectId ? Number(row.projectId) : undefined
   } else {
     formData.id = undefined
     formData.name = ''
     formData.category = ''
+    formData.projectId = undefined
     formData.address = ''
     formData.phone = ''
     formData.lat = undefined
@@ -189,7 +236,9 @@ const handleSubmit = async () => {
           ElMessage.success('更新成功')
         }
         dialogVisible.value = false
-        getList()
+        getList() // 刷新列表
+      } catch (error: any) {
+        console.error(error)
       } finally {
         submitLoading.value = false
       }
@@ -205,19 +254,10 @@ const handleDelete = (row: any) => {
   })
 }
 
-const handleCurrentChange = (val: number) => {
-  queryParams.current = val
-  getList()
-}
-const handleSizeChange = (val: number) => {
-  queryParams.pageSize = val
-  queryParams.current = 1 
-  getList()
-}
-
 const getProjectName = (id: number) => {
+  if (!id) return ''
   const p = projectOptions.value.find(item => item.id === id)
-  return p ? p.name : id
+  return p ? p.name : `ID:${id}`
 }
 
 onMounted(() => {
@@ -232,7 +272,7 @@ onMounted(() => {
     <el-card shadow="never" class="search-card">
       <el-form :inline="true" :model="queryParams">
         <el-form-item label="商户名称">
-          <el-input v-model="queryParams.name" placeholder="模糊搜索" clearable @keyup.enter="handleSearch" />
+          <el-input v-model="queryParams.name" placeholder="支持模糊搜索" clearable @keyup.enter="handleSearch" />
         </el-form-item>
         <el-form-item label="类别">
           <el-select v-model="queryParams.category" placeholder="全部" clearable style="width: 140px">
@@ -240,8 +280,19 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="关联项目">
-          <el-select v-model="queryParams.projectId" placeholder="全部" clearable style="width: 140px">
+          <el-select v-model="queryParams.projectId" placeholder="全部" clearable filterable style="width: 140px">
             <el-option v-for="item in projectOptions" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="排序方式">
+          <el-select 
+            v-model="queryParams.sortType" 
+            placeholder="默认" 
+            style="width: 140px" 
+            @change="handleSearch"
+          >
+            <el-option label="默认排序" value="default" />
+            <el-option label="评分: 高→低" value="rating" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -259,7 +310,7 @@ onMounted(() => {
       <el-table v-loading="loading" :data="tableData" border stripe>
         <el-table-column prop="id" label="ID" width="80" align="center" />
         
-        <el-table-column prop="name" label="商户名称" min-width="150" />
+        <el-table-column prop="name" label="商户名称" min-width="150" show-overflow-tooltip />
         <el-table-column prop="category" label="类别" width="100" align="center">
           <template #default="{ row }">
             <el-tag type="info">{{ row.category }}</el-tag>
@@ -273,9 +324,12 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column prop="rating" label="评分" width="80" align="center">
+        <el-table-column prop="rating" label="评分" width="100" align="center" sortable="custom">
           <template #default="{ row }">
-             <span style="color: #ff9900; font-weight: bold;">{{ row.rating }}</span>
+             <div style="display: flex; align-items: center; justify-content: center; gap: 5px;">
+               <span style="color: #ff9900; font-weight: bold; font-size: 16px;">{{ row.rating }}</span>
+               <span style="color: #999; font-size: 12px;">分</span>
+             </div>
           </template>
         </el-table-column>
 
@@ -329,6 +383,24 @@ onMounted(() => {
               </el-select>
             </el-form-item>
           </el-col>
+          <el-col :span="12">
+            <el-form-item label="关联项目" prop="projectId">
+              <el-select 
+                v-model="formData.projectId" 
+                placeholder="请选择关联非遗项目" 
+                style="width: 100%" 
+                filterable 
+                clearable
+              >
+                <el-option 
+                  v-for="item in projectOptions" 
+                  :key="item.id" 
+                  :label="item.name" 
+                  :value="item.id" 
+                />
+              </el-select>
+            </el-form-item>
+          </el-col>
         </el-row>
         
         <el-row :gutter="20">
@@ -367,6 +439,6 @@ onMounted(() => {
 <style scoped>
 .app-container { padding: 20px; background: #f0f2f5; min-height: calc(100vh - 84px); }
 .search-card { margin-bottom: 20px; }
-.toolbar { margin-bottom: 20px; }
+.toolbar { margin-bottom: 20px; display: flex; gap: 10px; }
 .pagination { margin-top: 20px; display: flex; justify-content: flex-end; }
 </style>

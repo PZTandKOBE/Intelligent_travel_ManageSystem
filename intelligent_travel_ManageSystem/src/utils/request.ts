@@ -41,7 +41,13 @@ const service: AxiosInstance = axios.create({
 // 请求拦截器
 service.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    // === 核心修复：自动清洗参数 ===
+    // === 核心修复 1：FormData 自动移除 JSON Header ===
+    // 必须让浏览器自动生成带 boundary 的 Content-Type
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type']
+    }
+
+    // === 核心修复 2：自动清洗参数 ===
     // 无论是 params (GET) 还是 data (POST)，都进行清洗
     if (config.params && typeof config.params === 'object') {
       config.params = cleanParams(config.params)
@@ -66,12 +72,15 @@ service.interceptors.response.use(
       return res
     }
 
-    if (res.code === 0) {
+    // 兼容后端可能返回 code 为 0 或 200 的情况（根据 API 文档，成功是 code: 0）
+    if (res.code === 0 || res.code === 200) {
       return res
     } else {
       // 401: 未登录
       if (res.code === 40100 || res.code === 401) {
         ElMessage.error('登录已过期，请重新登录')
+        // 建议添加 redirect 参数以便登录后跳回
+        // window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`
         window.location.href = '/login'
         return Promise.reject(new Error('Unauthorized'))
       }
